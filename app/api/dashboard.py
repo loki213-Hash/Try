@@ -419,10 +419,26 @@ def format_datetime_ist(dt: Optional[Union[datetime, str]]) -> Optional[str]:
     if isinstance(dt, str):
         if "IST" in dt:
             return dt
+        # Handle "HH:MM:SS UTC" or "HH:MM:SS" strings
+        if "UTC" in dt:
+            clean = dt.replace("UTC", "").strip()
+            parts = clean.split(":")
+            if len(parts) >= 2:
+                try:
+                    h, m = int(parts[0]), int(parts[1])
+                    s = int(float(parts[2])) if len(parts) > 2 else 0
+                    today = datetime.now(timezone.utc).replace(hour=h, minute=m, second=s, microsecond=0)
+                    ist = today.astimezone(timezone(timedelta(hours=5, minutes=30)))
+                    return ist.strftime("%d-%b-%Y %I:%M:%S %p IST")
+                except Exception:
+                    pass
         try:
-            dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+            clean = dt.strip().replace("Z", "+00:00")
+            if " " in clean and "T" not in clean:
+                clean = clean.replace(" ", "T")
+            dt = datetime.fromisoformat(clean)
         except Exception:
-            return dt
+            return dt.replace("UTC", "IST")
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     ist = dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
@@ -436,10 +452,26 @@ def format_time_ist(dt: Optional[Union[datetime, str]]) -> str:
     if isinstance(dt, str):
         if "IST" in dt:
             return dt
+        # Handle "HH:MM:SS UTC" or "HH:MM:SS" strings
+        if "UTC" in dt:
+            clean = dt.replace("UTC", "").strip()
+            parts = clean.split(":")
+            if len(parts) >= 2:
+                try:
+                    h, m = int(parts[0]), int(parts[1])
+                    s = int(float(parts[2])) if len(parts) > 2 else 0
+                    today = datetime.now(timezone.utc).replace(hour=h, minute=m, second=s, microsecond=0)
+                    ist = today.astimezone(timezone(timedelta(hours=5, minutes=30)))
+                    return ist.strftime("%I:%M:%S %p IST")
+                except Exception:
+                    pass
         try:
-            dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+            clean = dt.strip().replace("Z", "+00:00")
+            if " " in clean and "T" not in clean:
+                clean = clean.replace(" ", "T")
+            dt = datetime.fromisoformat(clean)
         except Exception:
-            return dt
+            return dt.replace("UTC", "IST")
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     ist = dt.astimezone(timezone(timedelta(hours=5, minutes=30)))

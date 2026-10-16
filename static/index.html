@@ -852,19 +852,47 @@
       const raw = s.fired_time || s.created_at;
       if (!raw) return '--';
       if (typeof raw === 'string' && raw.includes('IST')) return raw;
+
+      // 1. Direct regex match for "HH:MM:SS UTC" or "HH:MM:SS"
+      const m = String(raw).match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+      if (m && String(raw).includes('UTC')) {
+        const hh = parseInt(m[1], 10);
+        const mm = parseInt(m[2], 10);
+        const ss = m[3] ? parseInt(m[3], 10) : 0;
+        let totalMins = hh * 60 + mm + 330; // +5h 30m for Indian Standard Time
+        totalMins = (totalMins + 1440) % 1440;
+        const istH = Math.floor(totalMins / 60);
+        const istM = totalMins % 60;
+        const period = istH >= 12 ? 'PM' : 'AM';
+        const h12 = istH % 12 === 0 ? 12 : istH % 12;
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${pad(h12)}:${pad(istM)}:${pad(ss)} ${period} IST`;
+      }
+
+      // 2. Try parsing full datetime strings (e.g. SQLite "2026-10-16 08:55:00.609831")
       try {
-        const d = new Date(raw);
-        if (!isNaN(d.getTime())) {
-          return d.toLocaleTimeString('en-IN', {
-            timeZone: 'Asia/Kolkata',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: true
-          }) + ' IST';
+        let clean = String(raw).trim();
+        if (/^\d{4}-\d{2}-\d{2}/.test(clean)) {
+          if (clean.includes(' ') && !clean.includes('T')) {
+            clean = clean.replace(' ', 'T');
+          }
+          if (!clean.endsWith('Z') && !clean.includes('+')) {
+            clean += 'Z';
+          }
+          const d = new Date(clean);
+          if (!isNaN(d.getTime())) {
+            return d.toLocaleTimeString('en-IN', {
+              timeZone: 'Asia/Kolkata',
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              hour12: true
+            }) + ' IST';
+          }
         }
       } catch (e) {}
-      return String(raw);
+
+      return String(raw).replace(/UTC/gi, 'IST');
     }
 
     function formatSignalFiredFull(s) {
@@ -878,26 +906,43 @@
       const raw = s.fired_time_full || s.created_at || s.fired_time;
       if (!raw) return '--';
       if (typeof raw === 'string' && raw.includes('IST')) return raw;
+
+      const timePart = formatSignalFiredTime(s);
+
+      // If raw is just a time string like "08:55:00 UTC", prepend today's date
+      if (/^(\d{1,2}):(\d{2})/.test(String(raw))) {
+        const todayIST = new Date().toLocaleDateString('en-GB', {
+          timeZone: 'Asia/Kolkata',
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric'
+        }).replace(/ /g, '-');
+        return `${todayIST} ${timePart}`;
+      }
+
       try {
-        const d = new Date(raw);
-        if (!isNaN(d.getTime())) {
-          const datePart = d.toLocaleDateString('en-GB', {
-            timeZone: 'Asia/Kolkata',
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric'
-          }).replace(/ /g, '-');
-          const timePart = d.toLocaleTimeString('en-IN', {
-            timeZone: 'Asia/Kolkata',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: true
-          });
-          return `${datePart} ${timePart} IST`;
+        let clean = String(raw).trim();
+        if (/^\d{4}-\d{2}-\d{2}/.test(clean)) {
+          if (clean.includes(' ') && !clean.includes('T')) {
+            clean = clean.replace(' ', 'T');
+          }
+          if (!clean.endsWith('Z') && !clean.includes('+')) {
+            clean += 'Z';
+          }
+          const d = new Date(clean);
+          if (!isNaN(d.getTime())) {
+            const datePart = d.toLocaleDateString('en-GB', {
+              timeZone: 'Asia/Kolkata',
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric'
+            }).replace(/ /g, '-');
+            return `${datePart} ${timePart}`;
+          }
         }
       } catch (e) {}
-      return String(raw);
+
+      return `${timePart}`;
     }
 
     function showSignalModal(signalId) {

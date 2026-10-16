@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "Multi-Index Indian Options Signal Bot"
     APP_VERSION: str = "1.0.0"
     ENVIRONMENT: str = "production"  # development, staging, production
-    DEBUG: bool = False
+    DEBUG: bool = True
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     LOG_LEVEL: str = "INFO"
