@@ -185,6 +185,7 @@ def test_telegram_clean_message_strictly_excludes_tp_sl_reasons():
     assert "+63.5%" in clean_msg        # Highest Gain %
     assert "1st Hour" not in clean_msg  # 1st Hour is removed completely
     assert "MORE BULLISH" in clean_msg
+    assert "Fired At:" in clean_msg     # Fired time is present
 
     # 2. Assert DEEP-DIVE and EXECUTION fields are strictly EXCLUDED
     assert "Stop-Loss" not in clean_msg

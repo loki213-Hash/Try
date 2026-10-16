@@ -246,6 +246,19 @@
       color: #94a3b8;
       border: 1px solid rgba(100, 116, 139, 0.4);
     }
+    .signal-fired-pill {
+      font-size: 11px;
+      color: #94a3b8;
+      background: rgba(30, 41, 59, 0.7);
+      border: 1px solid #334155;
+      padding: 2px 7px;
+      border-radius: 5px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-family: monospace;
+    }
     .clean-price-bar {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -855,6 +868,7 @@
           <div class="signal-score">Score: ${s.score ? Number(s.score).toFixed(1) : '--'}/100</div>
         </div>
         <div class="signal-meta" style="margin-bottom:12px;">
+          <span>🕒 Fired: <strong style="color:#e2e8f0;">${s.fired_time_full || s.fired_time || s.created_at || '--'}</strong></span>
           <span>📅 Expiry: <strong style="color:#e2e8f0;">${expiry}</strong></span>
           <span>🛡️ False-Move: <strong>${riskLevel}</strong></span>
           <span>📊 ${ofShort}</span>
@@ -974,6 +988,7 @@
 
         // Highest % change from entry point
         const highestPct = (s.highest_gain_pct != null && Number(s.highest_gain_pct) > 0) ? `+${Number(s.highest_gain_pct).toFixed(1)}%` : '0.0%';
+        const firedTimeStr = s.fired_time || (s.created_at ? s.created_at.split(' ').slice(1).join(' ') : '--');
 
         card.className = `clean-signal-card ${(s.status || '').toLowerCase()}`;
         card.id = `clean-${s.signal_id}`;
@@ -985,6 +1000,7 @@
               ${sideBadge}
               <span>${contract}</span>
               <span id="clean-mstatus-${s.signal_id}" class="badge-momentum ${mBadgeClass}">${mBadgeText}</span>
+              <span class="signal-fired-pill">🕒 ${firedTimeStr}</span>
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
               <div class="signal-score">Score: ${scoreVal}/100</div>
@@ -1010,7 +1026,7 @@
 
           <div class="clean-card-footer">
             <span class="deepdive-link">🔍 View Deep-Dive Targets & Strategy Rationale →</span>
-            <span style="font-family:monospace; font-size:10px; color:var(--text-muted);">ID: ${s.signal_id}</span>
+            <span style="font-family:monospace; font-size:11px; color:#94a3b8;">🕒 Fired: <strong style="color:#e2e8f0;">${firedTimeStr}</strong> • ID: ${s.signal_id}</span>
           </div>
         `;
 
@@ -1120,6 +1136,7 @@
           ${milestoneBannerHtml}
           
           <div class="signal-meta">
+            <span>🕒 Fired: <strong style="color:#e2e8f0;">${s.fired_time_full || s.created_at || s.fired_time || '--'}</strong></span>
             <span>Contract: <span class="signal-contract-tag">${contract}</span></span>
             <span>📅 Expiry: <strong style="color:#e2e8f0;">${expiry}</strong></span>
             <span class="${riskClass}">${riskIcon} False-Move: ${riskLevel}</span>

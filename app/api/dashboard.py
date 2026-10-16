@@ -412,6 +412,26 @@ async def trigger_test_signal(
     }
 
 
+def format_datetime_ist(dt: Optional[datetime]) -> Optional[str]:
+    """Formats datetime into Indian Standard Time (IST) readable format."""
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    ist = dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
+    return ist.strftime("%d-%b-%Y %I:%M:%S %p")
+
+
+def format_time_ist(dt: Optional[datetime]) -> str:
+    """Formats datetime into IST time format, e.g. 09:25:38 AM."""
+    if not dt:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    ist = dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
+    return ist.strftime("%I:%M:%S %p")
+
+
 @router.get("/signals")
 async def get_signals() -> Dict[str, Any]:
     """Returns active and recent trading signals with full clean levels."""
@@ -548,6 +568,8 @@ async def get_signals() -> Dict[str, Any]:
             "highest_gain_pct": round(highest_gain, 2),
             "first_hour_gain_pct": first_hour_gain,
             "momentum_status": momentum_st,
+            "fired_time": format_time_ist(sig.created_at),
+            "fired_time_full": format_datetime_ist(sig.created_at),
 
             # Deep-Dive (2) fields
             "entry_range": f"₹{levels.entry_range_low:.2f} – ₹{levels.entry_range_high:.2f}" if levels else "Market",
@@ -560,8 +582,8 @@ async def get_signals() -> Dict[str, Any]:
             "tp3_confidence": tp3_conf,
             "reasons": sig.reasons,
             "score_breakdown": sig.score_breakdown,
-            "created_at": sig.created_at.strftime("%H:%M:%S UTC") if sig.created_at else None,
-            "expires_at": sig.expires_at.strftime("%H:%M:%S UTC") if sig.expires_at else None,
+            "created_at": format_datetime_ist(sig.created_at),
+            "expires_at": format_datetime_ist(sig.expires_at),
         })
     return {
         "signals": results,
@@ -609,16 +631,6 @@ async def delete_single_signal(signal_id: str) -> Dict[str, Any]:
         "signal_id": signal_id,
         "message": f"Signal {signal_id} deleted."
     }
-
-
-def format_datetime_ist(dt: Optional[datetime]) -> Optional[str]:
-    """Formats datetime into Indian Standard Time (IST) readable format."""
-    if not dt:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    ist = dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
-    return ist.strftime("%d-%b-%Y %I:%M:%S %p")
 
 
 @router.get("/trades")

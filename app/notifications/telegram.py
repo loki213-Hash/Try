@@ -8,7 +8,7 @@ Strictly labels all messages as PAPER SIGNALS with transparent hypotheses.
 
 from __future__ import annotations
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 import httpx
 
@@ -126,6 +126,15 @@ class TelegramNotifier:
         peak_str = f"+{highest_gain_pct:.1f}%" if (highest_gain_pct is not None and highest_gain_pct > 0) else "0.0%"
         status_tag = momentum_status or "ACTIVE"
 
+        fired_dt = signal.created_at
+        if fired_dt:
+            if fired_dt.tzinfo is None:
+                fired_dt = fired_dt.replace(tzinfo=timezone.utc)
+            ist_time = fired_dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
+            time_str = ist_time.strftime("%I:%M:%S %p IST")
+        else:
+            time_str = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%I:%M:%S %p IST")
+
         status_emoji = "🟢"
         if "BULLISH" in status_tag:
             status_emoji = "🚀"
@@ -140,6 +149,7 @@ class TelegramNotifier:
             f"<b>Contract:</b> <code>{contract}</code>\n"
             f"<b>Signal Type:</b> <b>{action}</b> ({signal.underlying})\n"
             f"<b>Confidence Score:</b> <b>{signal.score:.1f}/100</b>\n"
+            f"<b>Fired At:</b> <b>🕒 {time_str}</b>\n"
             f"<b>Entry Price:</b> <b>₹{entry_val:.2f}</b>\n"
             f"<b>Live Price:</b> <b>₹{ltp_val:.2f}</b>\n"
             f"<b>Highest Gain:</b> <b>{peak_str}</b>\n"
