@@ -186,6 +186,7 @@ def test_telegram_clean_message_strictly_excludes_tp_sl_reasons():
     assert "1st Hour" not in clean_msg  # 1st Hour is removed completely
     assert "MORE BULLISH" in clean_msg
     assert "Fired At:" in clean_msg     # Fired time is present
+    assert "IST" in clean_msg          # Explicit Indian Standard Time (IST) tag
 
     # 2. Assert DEEP-DIVE and EXECUTION fields are strictly EXCLUDED
     assert "Stop-Loss" not in clean_msg

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPException
 from datetime import datetime, timezone, timedelta
@@ -412,24 +412,38 @@ async def trigger_test_signal(
     }
 
 
-def format_datetime_ist(dt: Optional[datetime]) -> Optional[str]:
+def format_datetime_ist(dt: Optional[Union[datetime, str]]) -> Optional[str]:
     """Formats datetime into Indian Standard Time (IST) readable format."""
     if not dt:
         return None
+    if isinstance(dt, str):
+        if "IST" in dt:
+            return dt
+        try:
+            dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+        except Exception:
+            return dt
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     ist = dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
-    return ist.strftime("%d-%b-%Y %I:%M:%S %p")
+    return ist.strftime("%d-%b-%Y %I:%M:%S %p IST")
 
 
-def format_time_ist(dt: Optional[datetime]) -> str:
-    """Formats datetime into IST time format, e.g. 09:25:38 AM."""
+def format_time_ist(dt: Optional[Union[datetime, str]]) -> str:
+    """Formats datetime into Indian Standard Time (IST) time format, e.g. 09:25:38 AM IST."""
     if not dt:
         return ""
+    if isinstance(dt, str):
+        if "IST" in dt:
+            return dt
+        try:
+            dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+        except Exception:
+            return dt
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     ist = dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
-    return ist.strftime("%I:%M:%S %p")
+    return ist.strftime("%I:%M:%S %p IST")
 
 
 @router.get("/signals")

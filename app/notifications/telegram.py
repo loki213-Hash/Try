@@ -128,10 +128,18 @@ class TelegramNotifier:
 
         fired_dt = signal.created_at
         if fired_dt:
-            if fired_dt.tzinfo is None:
-                fired_dt = fired_dt.replace(tzinfo=timezone.utc)
-            ist_time = fired_dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
-            time_str = ist_time.strftime("%I:%M:%S %p IST")
+            if isinstance(fired_dt, str):
+                try:
+                    fired_dt = datetime.fromisoformat(fired_dt.replace("Z", "+00:00"))
+                except Exception:
+                    fired_dt = None
+            if fired_dt:
+                if fired_dt.tzinfo is None:
+                    fired_dt = fired_dt.replace(tzinfo=timezone.utc)
+                ist_time = fired_dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
+                time_str = ist_time.strftime("%I:%M:%S %p IST")
+            else:
+                time_str = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%I:%M:%S %p IST")
         else:
             time_str = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%I:%M:%S %p IST")
 
