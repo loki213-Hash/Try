@@ -1,0 +1,37 @@
+# Environment Variables & Secrets - NEVER COMMIT OR EXPOSE
+.env
+.env.*
+*.env
+!.env.example
+!example.env
+
+# Database & SQLite files
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Python Virtual Environments & Bytecode
+.venv/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Cache directories & data cache
+data_cache/
+.cache/
+.pytest_cache/
+scrip_master.csv
+*.csv
+
+# Logs & Runtime files
+*.log
+logs/
+.system_generated/
+
+# OS specific files
+.DS_Store
+Thumbs.db

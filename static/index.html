@@ -1,0 +1,2049 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Multi-Index Indian Options Signal Engine</title>
+  <style>
+    :root {
+      --bg-color: #0b0f19;
+      --card-bg: #111827;
+      --border-color: #1f2937;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --accent-blue: #3b82f6;
+      --accent-green: #10b981;
+      --accent-red: #ef4444;
+      --accent-amber: #f59e0b;
+      --accent-purple: #8b5cf6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg-color); color: var(--text-main); padding: 24px; min-height: 100vh; }
+    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border-color); }
+    .title-group h1 { font-size: 24px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }
+    .badge { padding: 4px 10px; border-radius: 9999px; font-size: 12px; font-weight: 600; text-transform: uppercase; }
+    .badge-paper { background: rgba(59, 130, 246, 0.2); color: var(--accent-blue); border: 1px solid var(--accent-blue); }
+    .badge-active { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); border: 1px solid var(--accent-green); }
+    .badge-locked { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); border: 1px solid var(--accent-red); }
+    .health-bar { display: flex; gap: 16px; font-size: 13px; align-items: center; }
+    .health-item { display: flex; align-items: center; gap: 6px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .dot-green { background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); }
+    .dot-red { background: var(--accent-red); box-shadow: 0 0 8px var(--accent-red); }
+    .dot-amber { background: var(--accent-amber); box-shadow: 0 0 8px var(--accent-amber); }
+    
+    /* Grid layout */
+    .dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .metric-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 18px; }
+    .metric-label { font-size: 13px; color: var(--text-muted); margin-bottom: 6px; font-weight: 500; }
+    .metric-value { font-size: 26px; font-weight: 700; color: #fff; }
+    .metric-sub { font-size: 12px; margin-top: 4px; color: var(--text-muted); }
+
+    /* Section Headers */
+    .section-title { font-size: 18px; font-weight: 600; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+    
+    /* Indices Cards */
+    .indices-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 24px; }
+    .index-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 14px; position: relative; }
+    .index-name { font-weight: 600; font-size: 15px; color: #fff; }
+    .index-exchange { font-size: 11px; color: var(--accent-blue); font-weight: 600; margin-bottom: 8px; }
+    .index-meta { font-size: 12px; color: var(--text-muted); line-height: 1.4; }
+
+    /* Main Content 2-Column Split */
+    .content-split { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+    @media (max-width: 1024px) { .content-split { grid-template-columns: 1fr; } }
+
+    .card-panel { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; }
+    
+    /* Signal Filters Toolbar */
+    .signal-filters-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; flex-wrap: wrap; }
+    .filter-group { display: inline-flex; background: #0f172a; padding: 3px; border-radius: 8px; border: 1px solid var(--border-color); gap: 4px; }
+    .filter-btn { background: transparent; color: var(--text-muted); border: none; padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.15s ease-in-out; }
+    .filter-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.05); }
+    .filter-btn.active { background: #2563eb; color: #fff; }
+    .filter-btn.active#btnFilterEntry { background: #059669; }
+    .filter-btn.active#btnFilterDeveloping { background: #7c3aed; }
+    .filter-btn.active#btnFilterEarlyWatch { background: #d97706; }
+    .filter-count { background: rgba(0, 0, 0, 0.35); padding: 1px 6px; border-radius: 9999px; font-size: 11px; }
+
+    /* Options Watchlist Card */
+    .options-watchlist-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; margin-bottom: 24px; }
+    .options-tabs { display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; flex-wrap: wrap; }
+    .options-tab-btn { background: #1e293b; color: var(--text-muted); border: 1px solid #334155; padding: 7px 18px; border-radius: 6px; font-size: 13.5px; font-weight: 600; cursor: pointer; transition: all 0.15s ease; }
+    .options-tab-btn:hover { background: #334155; color: #fff; }
+    .options-tab-btn.active { background: #2563eb; color: #ffffff; border-color: #3b82f6; font-weight: 700; box-shadow: 0 0 10px rgba(37, 99, 235, 0.4); }
+    .options-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
+    .option-item-card { background: #0f172a; border: 1px solid var(--border-color); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; transition: all 0.2s ease; position: relative; }
+    .option-item-card:hover { border-color: #3b82f6; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+    .option-item-card.call-card { border-top: 3px solid #10b981; }
+    .option-item-card.put-card { border-top: 3px solid #ef4444; }
+    
+    .option-badge-row { display: flex; justify-content: space-between; align-items: center; }
+    .opt-type-badge { font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 5px; text-transform: uppercase; letter-spacing: 0.4px; }
+    .badge-call { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
+    .badge-put { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); }
+    .opt-expiry-tag { font-size: 11px; font-weight: 600; color: #94a3b8; background: #1e293b; padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.06); }
+    
+    .option-symbol-title { font-size: 13.5px; font-weight: 700; color: #f8fafc; font-family: monospace; letter-spacing: 0.2px; }
+    
+    .option-price-hero { display: flex; justify-content: space-between; align-items: baseline; }
+    .option-ltp { font-size: 23px; font-weight: 800; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; transition: color 0.2s ease; }
+    .change-green { color: #10b981; font-size: 12px; font-weight: 700; }
+    .change-red { color: #ef4444; font-size: 12px; font-weight: 700; }
+    @keyframes tickFlashUp {
+      0% { color: #34d399; text-shadow: 0 0 12px rgba(52, 211, 153, 0.95); transform: scale(1.04); }
+      100% { color: #ffffff; text-shadow: none; transform: scale(1.0); }
+    }
+    @keyframes tickFlashDown {
+      0% { color: #f87171; text-shadow: 0 0 12px rgba(248, 113, 113, 0.95); transform: scale(1.04); }
+      100% { color: #ffffff; text-shadow: none; transform: scale(1.0); }
+    }
+    .flash-tick-up { animation: tickFlashUp 0.65s ease-out; }
+    .flash-tick-down { animation: tickFlashDown 0.65s ease-out; }
+    
+    .option-live-action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: #0b1120; border: 1px solid #1e293b; border-radius: 8px; padding: 8px 10px; font-size: 11.5px; }
+    .action-stat-box { display: flex; flex-direction: column; }
+    .action-stat-lbl { font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; margin-bottom: 2px; }
+    .action-stat-val { font-weight: 700; color: #e2e8f0; font-family: monospace; }
+    
+    .option-card-footer { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text-muted); border-top: 1px solid rgba(255,255,255,0.04); padding-top: 6px; }
+
+    /* Signals list */
+    .signals-container { display: flex; flex-direction: column; gap: 14px; max-height: 520px; overflow-y: auto; }
+    .signal-card { background: #1a2234; border: 1px solid var(--border-color); border-radius: 10px; padding: 16px; border-left: 5px solid var(--accent-blue); }
+    .signal-card.entry { border-left-color: var(--accent-green); }
+    .signal-card.setup_developing { border-left-color: #8b5cf6; }
+    .signal-card.early_watch { border-left-color: var(--accent-amber); }
+    .signal-card.watch { border-left-color: var(--accent-amber); }
+    .signal-card.tp, .signal-card.tp1, .signal-card.tp2, .signal-card.tp3 { border-left-color: var(--accent-purple); }
+    .signal-card.sl { border-left-color: var(--accent-red); }
+    .signal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .signal-title { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+    .badge-entry { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); border: 1px solid var(--accent-green); }
+    .badge-developing { background: rgba(139, 92, 246, 0.25); color: #c084fc; border: 1px solid #8b5cf6; font-weight: 700; }
+    .badge-earlywatch { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #f59e0b; font-weight: 700; }
+    .badge-watch { background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); border: 1px solid var(--accent-amber); }
+    .badge-risk-low { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 600; }
+    .badge-risk-mod { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 600; }
+    .badge-risk-high { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 600; }
+    .badge-promoted { background: rgba(56, 189, 248, 0.25); color: #38bdf8; border: 1px solid #0284c7; font-weight: 700; }
+    .badge-tp1 { background: rgba(16, 185, 129, 0.25); color: #34d399; border: 1px solid #10b981; font-weight: 700; }
+    .badge-tp2 { background: rgba(168, 85, 247, 0.25); color: #c084fc; border: 1px solid #a855f7; font-weight: 700; }
+    .badge-sl { background: rgba(239, 68, 68, 0.25); color: #f87171; border: 1px solid #ef4444; font-weight: 700; }
+    .signal-milestone-banner { font-size: 11.5px; font-weight: 700; padding: 7px 10px; border-radius: 6px; margin: 8px 0; display: flex; align-items: center; gap: 6px; line-height: 1.4; }
+    .banner-tp1 { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
+    .banner-tp2 { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.35); }
+    .banner-sl { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); }
+    .signal-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .signal-contract-tag { font-family: monospace; font-size: 11px; background: #0f172a; padding: 2px 7px; border-radius: 4px; border: 1px solid #1e293b; color: #93c5fd; }
+    .signal-score { font-size: 12px; font-weight: 700; background: rgba(59, 130, 246, 0.2); color: var(--accent-blue); padding: 2px 8px; border-radius: 4px; }
+    
+    .signal-levels-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; font-size: 12px; margin: 10px 0; background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #1e293b; }
+    @media (max-width: 600px) { .signal-levels-grid { grid-template-columns: repeat(2, 1fr); } }
+    .level-box { display: flex; flex-direction: column; text-align: center; }
+    .level-box .lbl { color: var(--text-muted); font-size: 10px; text-transform: uppercase; font-weight: 600; margin-bottom: 2px; }
+    .level-box .val { font-weight: 700; font-size: 12.5px; color: #fff; }
+    .level-box.entry-box .val { color: #38bdf8; }
+    .level-box.sl-box .val { color: #f87171; }
+    .level-box.tp-box .val { color: #34d399; }
+    
+    .reasons-box { margin-top: 8px; background: rgba(15, 23, 42, 0.6); padding: 8px 12px; border-radius: 6px; border: 1px solid #1e293b; }
+    .reasons-title { font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; margin-bottom: 4px; }
+    .reasons-list { font-size: 12px; color: #cbd5e1; list-style: none; }
+    .reasons-list li { margin-bottom: 3px; display: flex; align-items: flex-start; gap: 6px; }
+
+    /* Clean Signal Feed Cards (View 1) */
+    .clean-signal-card {
+      background: #141d2e;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: 14px 16px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+      border-left: 5px solid var(--accent-blue);
+    }
+    .clean-signal-card:hover {
+      background: #1a253c;
+      border-color: rgba(56, 189, 248, 0.5);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+    }
+    .clean-signal-card.entry { border-left-color: var(--accent-green); }
+    .clean-signal-card.setup_developing { border-left-color: #8b5cf6; }
+    .clean-signal-card.early_watch, .clean-signal-card.watch { border-left-color: var(--accent-amber); }
+    .clean-signal-card.highlight-focus, .signal-card.highlight-focus {
+      animation: pulseHighlight 2s ease infinite;
+    }
+    @keyframes pulseHighlight {
+      0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.8); }
+      70% { box-shadow: 0 0 0 10px rgba(56, 189, 248, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+    }
+    .clean-signal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .clean-signal-symbol {
+      font-size: 14.5px;
+      font-weight: 700;
+      color: #f8fafc;
+      letter-spacing: 0.3px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .badge-call {
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .badge-put {
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .badge-momentum {
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .badge-momentum-active {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+    .badge-momentum-bullish {
+      background: rgba(56, 189, 248, 0.2);
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.5);
+    }
+    .badge-momentum-bearish {
+      background: rgba(244, 63, 94, 0.2);
+      color: #fb7185;
+      border: 1px solid rgba(244, 63, 94, 0.5);
+    }
+    .badge-momentum-expired {
+      background: rgba(100, 116, 139, 0.2);
+      color: #94a3b8;
+      border: 1px solid rgba(100, 116, 139, 0.4);
+    }
+    .clean-price-bar {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      background: #0b1220;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 10px 14px;
+      gap: 12px;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    @media (max-width: 600px) {
+      .clean-price-bar { grid-template-columns: repeat(3, 1fr); }
+    }
+    .clean-stat-item .stat-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+    .clean-stat-item .stat-val {
+      font-size: 14px;
+      font-weight: 700;
+      color: #ffffff;
+      font-family: monospace;
+    }
+    .clean-stat-item .stat-val.entry-val { color: #38bdf8; }
+    .clean-stat-item .stat-val.live-val { color: #f1f5f9; }
+    .clean-stat-item .stat-val.peak-val { color: #10b981; }
+    .clean-card-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--text-muted);
+      padding-top: 4px;
+    }
+    .deepdive-link {
+      color: #38bdf8;
+      font-weight: 600;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+    }
+    .deepdive-link:hover {
+      text-decoration: underline;
+      color: #7dd3fc;
+    }
+
+    /* Modal Backdrop & Container */
+    .modal-backdrop {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-content {
+      background: #141e33;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      width: 100%;
+      max-width: 650px;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 18px;
+      border-bottom: 1px solid #1e293b;
+      background: #0f172a;
+    }
+    .modal-close-btn {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      font-size: 22px;
+      font-weight: 700;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .modal-close-btn:hover { color: #f8fafc; }
+
+    /* Table */
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; color: var(--text-muted); font-weight: 600; padding: 10px 8px; border-bottom: 1px solid var(--border-color); }
+    td { padding: 10px 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+    /* Trades Tabs & Dual Views */
+    .trades-nav-tabs {
+      display: inline-flex;
+      gap: 6px;
+      background: #0b1324;
+      padding: 3px;
+      border-radius: 8px;
+      border: 1px solid #1e293b;
+    }
+    .trades-nav-btn {
+      background: transparent;
+      color: var(--text-muted);
+      border: none;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+    .trades-nav-btn:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .trades-nav-btn.active {
+      background: #1e293b;
+      color: #38bdf8;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+    .trades-tab-count {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.1);
+      font-size: 10px;
+      color: #e2e8f0;
+      font-weight: 700;
+    }
+    .trades-nav-btn.active .trades-tab-count {
+      background: rgba(56, 189, 248, 0.2);
+      color: #38bdf8;
+    }
+
+    /* Close Button */
+    .btn-close-position {
+      background: rgba(239, 68, 68, 0.15);
+      color: #ef4444;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+    .btn-close-position:hover {
+      background: #dc2626;
+      color: #ffffff;
+      border-color: #dc2626;
+      transform: scale(1.02);
+      box-shadow: 0 2px 6px rgba(220, 38, 38, 0.4);
+    }
+    .btn-close-position:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* History Badges */
+    .badge-reason-tp {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10.5px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .badge-reason-sl {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10.5px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .badge-reason-manual {
+      background: rgba(217, 119, 6, 0.15);
+      color: #fbbf24;
+      border: 1px solid rgba(217, 119, 6, 0.4);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10.5px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .badge-pnl-pct-green {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+      font-family: monospace;
+    }
+    .badge-pnl-pct-red {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="title-group">
+      <h1>Multi-Index Indian Options Signal Bot</h1>
+      <span class="badge badge-paper">Paper Trading Mode</span>
+      <span id="riskLockBadge" class="badge badge-active">Risk Unlocked</span>
+    </div>
+    <div class="health-bar">
+      <div class="health-item"><span id="marketSessionDot" class="dot dot-amber"></span> <span id="marketSessionLabel">Market: Pre-Market</span></div>
+      <div class="health-item"><span id="brokerDot" class="dot dot-green"></span> <span id="brokerLabel">Broker: Active</span></div>
+      <div class="health-item"><span id="dbDot" class="dot dot-green"></span> Database: Connected</div>
+      <div class="health-item"><span id="staleDot" class="dot dot-green"></span> Data: Fresh</div>
+      <div class="health-item" style="color: var(--text-muted);" id="timeLabel">--:--:-- IST</div>
+    </div>
+  </header>
+
+  <!-- Top Metrics Summary -->
+  <div class="dashboard-grid">
+    <div class="metric-card">
+      <div class="metric-label">Paper Account Capital</div>
+      <div class="metric-value" id="capitalVal">₹5,00,000.00</div>
+      <div class="metric-sub" id="capitalSub">₹5,00,000 Starting • 0.5% risk/trade</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label" id="realizedPnlLabel">Net Realized P&L</div>
+      <div class="metric-value" id="realizedPnlVal">₹0.00</div>
+      <div class="metric-sub" id="pnlSub">Today: +₹0.00 • Total Net P&L</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Win Rate & Expectancy</div>
+      <div class="metric-value" id="winRateVal">--%</div>
+      <div class="metric-sub" id="expectancySub">Expectancy: ₹0.00 / trade</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Profit Factor & Drawdown</div>
+      <div class="metric-value" id="profitFactorVal">--</div>
+      <div class="metric-sub" id="drawdownSub">Max DD: 0.0%</div>
+    </div>
+  </div>
+
+  <!-- Monitored Indices Cards -->
+  <div class="section-title">
+    <span>Monitored Benchmark Indices</span>
+    <span style="font-size: 13px; color: var(--text-muted);">Independent ORB Engines</span>
+  </div>
+  <div class="indices-row" id="indicesGrid">
+    <!-- Populated dynamically -->
+  </div>
+
+  <!-- Top Traded Options Watchlist (Upstox Live Market Feed) -->
+  <div class="options-watchlist-card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+      <div>
+        <h2 style="font-size: 17px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px;">
+          <span>🎯 Live Options Action & Signal Scanner</span>
+          <span style="font-size: 11px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid #3b82f6; padding: 2px 8px; border-radius: 9999px; font-weight: 600;">Upstox Live Feed</span>
+        </h2>
+        <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+          Live dated options chain (Calls & Puts). When 5-pillar technical metrics & confidence gates trigger, genuine signals automatically fire into Telegram and the Signals Feed with automated paper trade execution.
+        </div>
+      </div>
+      <div id="optionsSpotInfo" style="font-size: 13px; color: #38bdf8; font-weight: 700; background: #0f172a; padding: 4px 10px; border-radius: 6px; border: 1px solid #1e293b;">
+        Spot: Syncing...
+      </div>
+    </div>
+
+    <!-- NSE & BSE Options Benchmark Tabs -->
+    <div class="options-tabs">
+      <button class="options-tab-btn active" id="tabNIFTY" onclick="selectOptionsTab('NIFTY')">Nifty 50 (NSE)</button>
+      <button class="options-tab-btn" id="tabSENSEX" onclick="selectOptionsTab('SENSEX')">Sensex (BSE)</button>
+    </div>
+
+    <!-- Options Cards Grid -->
+    <div class="options-grid" id="optionsGrid">
+      <div style="color: var(--text-muted); font-size: 13px; padding: 20px 0;">Loading options feed...</div>
+    </div>
+  </div>
+
+  <!-- 2-Column Split: Active Signals vs Paper Trades -->
+  <div class="content-split">
+    <!-- Left Column: Signals Feed -->
+    <!-- Left Column: Signals Feed & Deep-Dive -->
+    <div class="card-panel">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+        <div class="trades-nav-tabs">
+          <button id="btnTabCleanSignals" class="trades-nav-btn active" onclick="switchSignalsView('clean')">
+            ⚡ Signals Feed (Clean) <span class="trades-tab-count" id="cleanSignalCount">0</span>
+          </button>
+          <button id="btnTabDeepDiveSignals" class="trades-nav-btn" onclick="switchSignalsView('deepdive')">
+            🔬 Deep-Dive & Executions <span class="trades-tab-count" id="deepDiveSignalCount">0</span>
+          </button>
+        </div>
+        <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+          <button id="testSigBtn" onclick="triggerDemoSignal('ENTRY')" style="background:#059669; color:white; border:none; padding:4px 9px; border-radius:4px; font-size:12px; font-weight:600; cursor:pointer;" title="Generate Test Entry Signal">⚡ Test Entry</button>
+          <button id="testDevBtn" onclick="triggerDemoSignal('SETUP_DEVELOPING')" style="background:#7c3aed; color:white; border:none; padding:4px 9px; border-radius:4px; font-size:12px; font-weight:600; cursor:pointer;" title="Generate Test Developing Signal">⏳ Test Dev</button>
+          <button id="testWatchBtn" onclick="triggerDemoSignal('EARLY_WATCH')" style="background:#d97706; color:white; border:none; padding:4px 9px; border-radius:4px; font-size:12px; font-weight:600; cursor:pointer;" title="Generate Test Early Watch Signal">👁️ Test Watch</button>
+          <button id="clearSignalsBtn" onclick="clearAllSignals()" style="background:#dc2626; color:white; border:none; padding:4px 9px; border-radius:4px; font-size:12px; font-weight:600; cursor:pointer;" title="Clear All Signals to clean feed">🗑️ Clear</button>
+          <span class="badge" style="background:#1f2937;" id="signalCount">0 Signals</span>
+        </div>
+      </div>
+      <div class="signal-filters-toolbar">
+        <div class="filter-group">
+          <button class="filter-btn active" id="btnFilterAll" onclick="setSignalFilter('ALL')">
+            All <span class="filter-count" id="countAll">0</span>
+          </button>
+          <button class="filter-btn" id="btnFilterEntry" onclick="setSignalFilter('ENTRY')">
+            ⚡ Entry <span class="filter-count" id="countEntry">0</span>
+          </button>
+          <button class="filter-btn" id="btnFilterDeveloping" onclick="setSignalFilter('SETUP_DEVELOPING')">
+            ⏳ Developing <span class="filter-count" id="countDeveloping">0</span>
+          </button>
+          <button class="filter-btn" id="btnFilterEarlyWatch" onclick="setSignalFilter('EARLY_WATCH')">
+            👁️ Early Watch <span class="filter-count" id="countEarlyWatch">0</span>
+          </button>
+        </div>
+        <div id="filterSummaryLabel" style="font-size: 11px; color: var(--text-muted); font-weight: 500;">
+          Showing All
+        </div>
+      </div>
+      <!-- View 1: Clean Signals Feed Container -->
+      <div class="signals-container" id="signalsList">
+        <div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 40px 0;">
+          No active signals. Strategies monitoring market structure and waiting for validated breakouts.
+        </div>
+      </div>
+      <!-- View 2: Dedicated Deep-Dive Feed Container -->
+      <div class="signals-container" id="signalsListDeepDive" style="display:none;">
+        <div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 40px 0;">
+          No signals available for deep-dive.
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column: Paper Trades & Trade History -->
+    <div class="card-panel">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+        <div class="trades-nav-tabs">
+          <button id="btnTabActiveTrades" class="trades-nav-btn active" onclick="switchTradesView('active')">
+            ⚡ Active Positions <span class="trades-tab-count" id="tradeCount">0</span>
+          </button>
+          <button id="btnTabHistoryTrades" class="trades-nav-btn" onclick="switchTradesView('history')">
+            📜 Trade History <span class="trades-tab-count" id="historyCount">0</span>
+          </button>
+        </div>
+        <div id="tradesTabSubtitle" style="font-size: 11px; color: var(--text-muted); font-weight: 500;">
+          Live Active Positions (Manual Close available)
+        </div>
+      </div>
+
+      <!-- Active Positions View -->
+      <div id="activeTradesView" style="overflow-x: auto; max-height: 480px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Index / Contract</th>
+              <th>Side</th>
+              <th>Entry</th>
+              <th>Live LTP</th>
+              <th>Invested</th>
+              <th>Current Value</th>
+              <th>Lots / Qty</th>
+              <th>Unrealized P&L</th>
+              <th style="text-align: center;">Action</th>
+            </tr>
+          </thead>
+          <tbody id="tradesTable">
+            <tr>
+              <td colspan="9" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                No active paper positions currently open.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Trade History View -->
+      <div id="historyTradesView" style="overflow-x: auto; max-height: 480px; display: none;">
+        <table>
+          <thead>
+            <tr>
+              <th>Index / Contract</th>
+              <th>Side</th>
+              <th>Entry Price</th>
+              <th>Avg Closed Price</th>
+              <th>Invested</th>
+              <th>Exit Value</th>
+              <th>Lots / Qty</th>
+              <th>Net P&L (₹)</th>
+              <th>% Profit</th>
+              <th>Entry Date & Time</th>
+              <th>Close Date & Time</th>
+              <th>Exit Reason</th>
+            </tr>
+          </thead>
+          <tbody id="historyTable">
+            <tr>
+              <td colspan="12" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                No closed trades in history yet.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function updateDashboard() {
+      try {
+        const now = new Date();
+        const istOffset = 5.5 * 60 * 60 * 1000;
+        const istDate = new Date(now.getTime() + istOffset);
+        const istHours = istDate.getUTCHours();
+        const istMinutes = istDate.getUTCMinutes();
+        const istSeconds = istDate.getUTCSeconds();
+        const istTotalMins = istHours * 60 + istMinutes;
+        const isWeekday = istDate.getUTCDay() >= 1 && istDate.getUTCDay() <= 5;
+        
+        const pad = (n) => String(n).padStart(2, '0');
+        const timeStr = `${pad(istHours)}:${pad(istMinutes)}:${pad(istSeconds)} IST`;
+        const timeEl = document.getElementById('timeLabel');
+        if (timeEl) timeEl.innerText = timeStr;
+
+        const sessionDot = document.getElementById('marketSessionDot');
+        const sessionLbl = document.getElementById('marketSessionLabel');
+        if (sessionDot && sessionLbl) {
+          if (!isWeekday) {
+            sessionDot.className = 'dot dot-red';
+            sessionLbl.innerText = 'Market: Weekend Closed';
+          } else if (istTotalMins >= 555 && istTotalMins <= 930) {
+            // 09:15 to 15:30 IST
+            sessionDot.className = 'dot dot-green';
+            sessionLbl.innerHTML = '<span style="color:#34d399; font-weight:700;">Market: LIVE (NSE/BSE)</span>';
+          } else if (istTotalMins >= 540 && istTotalMins < 555) {
+            // 09:00 to 09:15 IST
+            sessionDot.className = 'dot dot-amber';
+            sessionLbl.innerHTML = '<span style="color:#fbbf24; font-weight:700;">Pre-Market Active (Opens 09:15)</span>';
+          } else if (istTotalMins < 540) {
+            const minsLeft = 555 - istTotalMins;
+            const hrs = Math.floor(minsLeft / 60);
+            const mins = minsLeft % 60;
+            sessionDot.className = 'dot dot-amber';
+            sessionLbl.innerText = `Pre-Market (Opens in ${hrs}h ${mins}m @ 09:15 IST)`;
+          } else {
+            sessionDot.className = 'dot dot-red';
+            sessionLbl.innerText = 'Market: Closed (Next 09:15 IST)';
+          }
+        }
+
+        // 1. Fetch Health
+        const healthRes = await fetch('/api/health');
+        if (healthRes.ok) {
+          const health = await healthRes.json();
+          document.getElementById('brokerLabel').innerText = `Broker: ${health.primary_broker.toUpperCase()}`;
+          document.getElementById('brokerDot').className = health.broker_connected ? 'dot dot-green' : 'dot dot-red';
+          document.getElementById('dbDot').className = health.db_connected ? 'dot dot-green' : 'dot dot-red';
+          document.getElementById('staleDot').className = health.stale_data_flag ? 'dot dot-amber' : 'dot dot-green';
+        }
+
+        // Parallel non-blocking fetches across all dashboard endpoints
+        const [riskRes, idxRes, metricRes, sigRes, tradeRes] = await Promise.all([
+          fetch('/api/risk').catch(() => null),
+          fetch('/api/indices').catch(() => null),
+          fetch('/api/metrics').catch(() => null),
+          fetch('/api/signals').catch(() => null),
+          fetch('/api/trades').catch(() => null),
+        ]);
+
+        // 2. Process Risk & Metrics
+        let currentRisk = null;
+        let currentMetrics = null;
+        if (riskRes && riskRes.ok) currentRisk = await riskRes.json();
+        if (metricRes && metricRes.ok) currentMetrics = await metricRes.json();
+        if (currentRisk || currentMetrics) {
+          renderTopMetrics(currentRisk, currentMetrics);
+        }
+
+        // 3. Process Indices
+        if (idxRes && idxRes.ok) {
+          const data = await idxRes.json();
+          renderIndicesCards(data.indices);
+        }
+
+        // 5. Process Signals
+        if (sigRes && sigRes.ok) {
+          const sData = await sigRes.json();
+          updateSignalsData(sData.signals || []);
+        }
+
+        // 6. Process Trades
+        if (tradeRes && tradeRes.ok) {
+          const tData = await tradeRes.json();
+          renderTradesTable(tData.open_trades, tData.closed_trades);
+        }
+
+        // 7. Options Watchlist is maintained continuously via real-time WebSocket and cache
+        fetchAndRenderOptionsWatchlist();
+
+      } catch (err) {
+        console.error("Dashboard refresh error:", err);
+      }
+    }
+
+    let currentSignalFilter = 'ALL';
+    let cachedSignals = [];
+
+    function setSignalFilter(filter) {
+      currentSignalFilter = filter;
+      const bAll = document.getElementById('btnFilterAll'); if (bAll) bAll.classList.toggle('active', filter === 'ALL');
+      const bEnt = document.getElementById('btnFilterEntry'); if (bEnt) bEnt.classList.toggle('active', filter === 'ENTRY');
+      const bDev = document.getElementById('btnFilterDeveloping'); if (bDev) bDev.classList.toggle('active', filter === 'SETUP_DEVELOPING');
+      const bWat = document.getElementById('btnFilterEarlyWatch'); if (bWat) bWat.classList.toggle('active', filter === 'EARLY_WATCH');
+
+      const lbl = document.getElementById('filterSummaryLabel');
+      if (lbl) {
+        if (filter === 'ALL') lbl.innerText = 'Showing All';
+        else if (filter === 'ENTRY') lbl.innerText = 'Filtered: Entry Active';
+        else if (filter === 'SETUP_DEVELOPING') lbl.innerText = 'Filtered: Setup Developing';
+        else if (filter === 'EARLY_WATCH') lbl.innerText = 'Filtered: Early Watch';
+      }
+      renderSignalsList();
+    }
+
+    let currentSignalsView = 'clean'; // 'clean' or 'deepdive'
+
+    function switchSignalsView(view) {
+      currentSignalsView = view;
+      const bClean = document.getElementById('btnTabCleanSignals');
+      const bDeep = document.getElementById('btnTabDeepDiveSignals');
+      if (bClean) bClean.classList.toggle('active', view === 'clean');
+      if (bDeep) bDeep.classList.toggle('active', view === 'deepdive');
+
+      const cClean = document.getElementById('signalsList');
+      const cDeep = document.getElementById('signalsListDeepDive');
+      if (cClean) cClean.style.display = (view === 'clean') ? 'flex' : 'none';
+      if (cDeep) cDeep.style.display = (view === 'deepdive') ? 'flex' : 'none';
+
+      renderSignalsList();
+    }
+
+    function openSignalDeepDive(signalId) {
+      // 1. Open instant modal dialog for in-place deep-dive inspection
+      showSignalModal(signalId);
+
+      // 2. Also switch to dedicated deepdive tab behind modal and focus on the element
+      switchSignalsView('deepdive');
+      setTimeout(() => {
+        const el = document.getElementById(`deepdive-${signalId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('highlight-focus');
+          setTimeout(() => el.classList.remove('highlight-focus'), 3000);
+        }
+      }, 100);
+    }
+
+    function showSignalModal(signalId) {
+      const s = (cachedSignals || []).find(x => x.signal_id === signalId);
+      if (!s) return;
+      const modal = document.getElementById('signalModal');
+      const modalTitle = document.getElementById('modalTitle');
+      const modalBody = document.getElementById('modalBody');
+      if (!modal || !modalTitle || !modalBody) return;
+
+      const optType = s.option_type || (s.side && s.side.includes('CE') ? 'CALL (CE)' : 'PUT (PE)');
+      const contract = s.contract_symbol || `${s.underlying} Option`;
+      const expiry = s.expiry_date || 'Weekly';
+      const entryRange = s.entry_range || (s.entry_price ? `₹${Number(s.entry_price).toFixed(2)}` : '--');
+      const riskLevel = s.false_move_risk_level || 'LOW';
+      const ofSource = s.order_flow_source || 'ESTIMATED_TICK_DELTA';
+      const ofShort = ofSource.includes('TICK') ? 'Tick Delta' : 'Depth Imbalance';
+
+      modalTitle.innerHTML = `<span>${s.underlying} — ${optType}</span> <span style="font-size:12px; font-weight:normal; color:#94a3b8; margin-left:8px;">ID: ${s.signal_id}</span>`;
+      
+      modalBody.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+          <div style="font-size:15px; font-weight:700; color:#f8fafc;">${contract}</div>
+          <div class="signal-score">Score: ${s.score ? Number(s.score).toFixed(1) : '--'}/100</div>
+        </div>
+        <div class="signal-meta" style="margin-bottom:12px;">
+          <span>📅 Expiry: <strong style="color:#e2e8f0;">${expiry}</strong></span>
+          <span>🛡️ False-Move: <strong>${riskLevel}</strong></span>
+          <span>📊 ${ofShort}</span>
+          ${s.net_rr_tp1 ? `<span style="color:#34d399; font-weight:600;">Net R:R ${s.net_rr_tp1}:1</span>` : ''}
+        </div>
+        <div class="signal-levels-grid" style="margin-bottom:14px;">
+          <div class="level-box entry-box">
+            <span class="lbl">Entry Price</span>
+            <span class="val">${entryRange}</span>
+          </div>
+          <div class="level-box sl-box">
+            <span class="lbl">Stop Loss (SL)</span>
+            <span class="val">${s.sl_price || '--'}</span>
+          </div>
+          <div class="level-box tp-box">
+            <span class="lbl">Target 1 <span class="tp-conf-chip">${s.tp1_confidence ? s.tp1_confidence + '%' : '85%'}</span></span>
+            <span class="val">${s.tp1_price || '--'}</span>
+          </div>
+          <div class="level-box tp-box">
+            <span class="lbl">Target 2 <span class="tp-conf-chip">${s.tp2_confidence ? s.tp2_confidence + '%' : '65%'}</span></span>
+            <span class="val">${s.tp2_price || '--'}</span>
+          </div>
+          <div class="level-box tp-box">
+            <span class="lbl">Target 3 <span class="tp-conf-chip">${s.tp3_confidence ? s.tp3_confidence + '%' : '42%'}</span></span>
+            <span class="val">${s.tp3_price || '--'}</span>
+          </div>
+        </div>
+        <div class="reasons-box">
+          <div class="reasons-title">Strategy Rationale / Technical Evidence</div>
+          <ul class="reasons-list">
+            ${(s.reasons || []).slice(0, 6).map(r => `<li><span style="color:#10b981; font-weight:bold;">✓</span><span>${r}</span></li>`).join('')}
+          </ul>
+        </div>
+        <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px;">
+          <button onclick="closeSignalModal()" style="background:#334155; color:#f1f5f9; border:none; padding:7px 16px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">Close</button>
+          <button onclick="closeSignalModal(); switchSignalsView('deepdive');" style="background:#0284c7; color:#ffffff; border:none; padding:7px 16px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">View In Deep-Dive Tab →</button>
+        </div>
+      `;
+
+      modal.style.display = 'flex';
+    }
+
+    function closeSignalModal(event) {
+      if (event && event.target && event.target.id !== 'signalModal' && !event.target.classList.contains('modal-close-btn')) {
+        return;
+      }
+      const modal = document.getElementById('signalModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function renderSignalsList() {
+      const cleanContainer = document.getElementById('signalsList');
+      const deepContainer = document.getElementById('signalsListDeepDive');
+      if (!cleanContainer || !deepContainer) return;
+
+      const totalSignals = (cachedSignals || []).length;
+      const countEntry = (cachedSignals || []).filter(s => (s.status || '').toUpperCase() === 'ENTRY').length;
+      const countDeveloping = (cachedSignals || []).filter(s => (s.status || '').toUpperCase() === 'SETUP_DEVELOPING').length;
+      const countEarlyWatch = (cachedSignals || []).filter(s => ['EARLY_WATCH', 'WATCH'].includes((s.status || '').toUpperCase())).length;
+
+      const cntEl = document.getElementById('signalCount');
+      if (cntEl) cntEl.innerText = `${totalSignals} Signals`;
+      const cleanCntEl = document.getElementById('cleanSignalCount');
+      if (cleanCntEl) cleanCntEl.innerText = totalSignals;
+      const deepCntEl = document.getElementById('deepDiveSignalCount');
+      if (deepCntEl) deepCntEl.innerText = totalSignals;
+
+      const cAll = document.getElementById('countAll'); if (cAll) cAll.innerText = totalSignals;
+      const cEnt = document.getElementById('countEntry'); if (cEnt) cEnt.innerText = countEntry;
+      const cDev = document.getElementById('countDeveloping'); if (cDev) cDev.innerText = countDeveloping;
+      const cWat = document.getElementById('countEarlyWatch'); if (cWat) cWat.innerText = countEarlyWatch;
+
+      let filtered = cachedSignals || [];
+      if (currentSignalFilter === 'ENTRY') {
+        filtered = filtered.filter(s => (s.status || '').toUpperCase() === 'ENTRY');
+      } else if (currentSignalFilter === 'SETUP_DEVELOPING') {
+        filtered = filtered.filter(s => (s.status || '').toUpperCase() === 'SETUP_DEVELOPING');
+      } else if (currentSignalFilter === 'EARLY_WATCH') {
+        filtered = filtered.filter(s => ['EARLY_WATCH', 'WATCH'].includes((s.status || '').toUpperCase()));
+      }
+
+      if (filtered.length === 0) {
+        cleanContainer.innerHTML = `<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 40px 0;">No <b>${currentSignalFilter.replace('_', ' ')}</b> signals in queue. Strategies monitoring market structure.</div>`;
+        deepContainer.innerHTML = `<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 40px 0;">No <b>${currentSignalFilter.replace('_', ' ')}</b> signals available for deep-dive.</div>`;
+        return;
+      }
+
+      // 1. RENDER CLEAN SIGNALS (View 1 - Strictly Contract, Score, Signal Type, Entry Price, Live Price, Peak % Gain)
+      cleanContainer.innerHTML = '';
+      for (const s of filtered) {
+        const card = document.createElement('div');
+        const isCall = (s.side && s.side.toUpperCase().includes('CE')) || (s.option_type && s.option_type.includes('CALL'));
+        const sideBadge = isCall ? '<span class="badge-call">BUY CE</span>' : '<span class="badge-put">BUY PE</span>';
+        const contract = s.contract_symbol || `${s.underlying} Option`;
+        const scoreVal = s.score ? Number(s.score).toFixed(1) : '--';
+        
+        // Momentum status tag: ACTIVE, MORE BULLISH, MORE BEARISH, EXPIRED
+        const mStatus = (s.momentum_status || 'ACTIVE').toUpperCase();
+        let mBadgeClass = 'badge-momentum-active';
+        let mBadgeText = '🟢 ACTIVE';
+        if (mStatus.includes('BULLISH')) {
+          mBadgeClass = 'badge-momentum-bullish';
+          mBadgeText = '🚀 MORE BULLISH';
+        } else if (mStatus.includes('BEARISH')) {
+          mBadgeClass = 'badge-momentum-bearish';
+          mBadgeText = '🔻 MORE BEARISH';
+        } else if (mStatus.includes('EXPIRED')) {
+          mBadgeClass = 'badge-momentum-expired';
+          mBadgeText = '⌛ EXPIRED';
+        }
+
+        const entryNum = Number(s.entry_price || 0);
+        const liveNum = Number(s.live_price || entryNum || 0);
+        const liveDiffPct = (entryNum > 0 && liveNum > 0) ? ((liveNum - entryNum) / entryNum * 100).toFixed(1) : '0.0';
+        const liveDiffStr = Number(liveDiffPct) >= 0 ? `+${liveDiffPct}%` : `${liveDiffPct}%`;
+        const liveDiffClass = Number(liveDiffPct) >= 0 ? 'color: #34d399;' : 'color: #f87171;';
+
+        // Highest % change from entry point
+        const highestPct = (s.highest_gain_pct != null && Number(s.highest_gain_pct) > 0) ? `+${Number(s.highest_gain_pct).toFixed(1)}%` : '0.0%';
+
+        card.className = `clean-signal-card ${(s.status || '').toLowerCase()}`;
+        card.id = `clean-${s.signal_id}`;
+        card.dataset.signalId = s.signal_id;
+        card.dataset.ltp = String(liveNum);
+        card.innerHTML = `
+          <div class="clean-signal-header">
+            <div class="clean-signal-symbol">
+              ${sideBadge}
+              <span>${contract}</span>
+              <span id="clean-mstatus-${s.signal_id}" class="badge-momentum ${mBadgeClass}">${mBadgeText}</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div class="signal-score">Score: ${scoreVal}/100</div>
+              <button onclick="deleteSignal('${s.signal_id}', event)" style="background:transparent; border:1px solid rgba(239, 68, 68, 0.4); color:#ef4444; border-radius:4px; padding:2px 7px; font-size:12px; cursor:pointer;" title="Delete this signal">🗑️</button>
+            </div>
+          </div>
+
+          <!-- Clean Price & Peak Excursion Bar (3 Columns: Entry, Live Price & %, Highest % Gain) -->
+          <div class="clean-price-bar">
+            <div class="clean-stat-item">
+              <div class="stat-label">Entry Price</div>
+              <div class="stat-val entry-val">₹${entryNum > 0 ? entryNum.toFixed(2) : '--'}</div>
+            </div>
+            <div class="clean-stat-item">
+              <div class="stat-label">Live Price & %</div>
+              <div class="stat-val live-val" id="clean-live-${s.signal_id}">₹${liveNum > 0 ? liveNum.toFixed(2) : '--'} <span style="font-size:11.5px; font-weight:700; ${liveDiffClass}">(${liveDiffStr})</span></div>
+            </div>
+            <div class="clean-stat-item">
+              <div class="stat-label">Highest % Gain</div>
+              <div class="stat-val peak-val" id="clean-peak-${s.signal_id}">🚀 ${highestPct}</div>
+            </div>
+          </div>
+
+          <div class="clean-card-footer">
+            <span class="deepdive-link">🔍 View Deep-Dive Targets & Strategy Rationale →</span>
+            <span style="font-family:monospace; font-size:10px; color:var(--text-muted);">ID: ${s.signal_id}</span>
+          </div>
+        `;
+
+        card.onclick = (e) => {
+          if (!e.target.closest('button')) {
+            openSignalDeepDive(s.signal_id);
+          }
+        };
+
+        cleanContainer.appendChild(card);
+      }
+
+      // 2. RENDER DEEP-DIVE SIGNALS (View 2 - Full Target Analysis, SL, TP1/2/3, Reasons, Executions)
+      deepContainer.innerHTML = '';
+      for (const s of filtered) {
+        const el = document.createElement('div');
+        const stUpper = (s.status || '').toUpperCase();
+        const isEntry = stUpper === 'ENTRY';
+        const isDev = stUpper === 'SETUP_DEVELOPING';
+        const isWatch = stUpper === 'EARLY_WATCH' || stUpper === 'WATCH';
+        const isTp1 = stUpper === 'TP1_HIT';
+        const isTp2 = stUpper === 'TP2_HIT';
+        const isSl = stUpper.includes('SL');
+        const isInvalidated = stUpper === 'INVALIDATED';
+        const isExpired = stUpper === 'EXPIRED';
+
+        let statusBadgeClass = 'badge-earlywatch';
+        let statusBadgeText = s.status || 'EARLY_WATCH';
+        if (isEntry) {
+          statusBadgeClass = 'badge-entry';
+          statusBadgeText = '🚨 ENTRY ACTIVE';
+        } else if (isDev) {
+          statusBadgeClass = 'badge-developing';
+          statusBadgeText = '⏳ SETUP DEVELOPING';
+        } else if (isWatch) {
+          statusBadgeClass = 'badge-earlywatch';
+          statusBadgeText = '👁️ EARLY WATCH';
+        } else if (isTp1) {
+          statusBadgeClass = 'badge-tp1';
+          statusBadgeText = '🎯 TP1 ACHIEVED (80% BOOKED)';
+        } else if (isTp2) {
+          statusBadgeClass = 'badge-tp2';
+          statusBadgeText = '🚀 TP2 ACHIEVED (100% BOOKED)';
+        } else if (isSl) {
+          statusBadgeClass = 'badge-sl';
+          statusBadgeText = '🛑 STOP-LOSS HIT';
+        } else if (isInvalidated) {
+          statusBadgeClass = 'badge-sl';
+          statusBadgeText = '❌ SETUP INVALIDATED';
+        } else if (isExpired) {
+          statusBadgeClass = 'badge-risk-mod';
+          statusBadgeText = '⌛ SETUP EXPIRED';
+        }
+
+        const isPromoted = s.is_promoted || (s.reasons || []).some(r => String(r).toLowerCase().includes('promoted'));
+        const optType = s.option_type || (s.side && s.side.includes('CE') ? 'CALL (CE)' : 'PUT (PE)');
+        const contract = s.contract_symbol || `${s.underlying} Option`;
+        const expiry = s.expiry_date || 'Weekly';
+        const entryRange = s.entry_range || (s.entry_price ? `₹${Number(s.entry_price).toFixed(2)}` : '--');
+
+        const riskLevel = s.false_move_risk_level || 'LOW';
+        let riskClass = 'badge-risk-low';
+        let riskIcon = '🛡️';
+        if (riskLevel === 'HIGH') {
+          riskClass = 'badge-risk-high';
+          riskIcon = '🚨';
+        } else if (riskLevel === 'MODERATE') {
+          riskClass = 'badge-risk-mod';
+          riskIcon = '⚠️';
+        }
+
+        const ofSource = s.order_flow_source || 'ESTIMATED_TICK_DELTA';
+        const ofShort = ofSource.includes('TICK') ? 'Tick Delta' : 'Depth Imbalance';
+
+        let milestoneBannerHtml = '';
+        if (isTp1) {
+          milestoneBannerHtml = `
+            <div class="signal-milestone-banner banner-tp1">
+              🎯 <b>TARGET 1 REACHED!</b> 80% position closed with profit locked. Remaining 20% running with SL trailed to Breakeven (₹${s.entry_price ? Number(s.entry_price).toFixed(2) : '--'})!
+            </div>`;
+        } else if (isTp2) {
+          milestoneBannerHtml = `
+            <div class="signal-milestone-banner banner-tp2">
+              🚀 <b>TARGET 2 REACHED!</b> 100% Target achieved! All lots closed with maximum profit.
+            </div>`;
+        } else if (isSl) {
+          milestoneBannerHtml = `
+            <div class="signal-milestone-banner banner-sl">
+              🛑 <b>STOP-LOSS HIT:</b> Position closed within deterministic risk budget. Capital protected.
+            </div>`;
+        }
+        
+        el.className = `signal-card ${(s.status || '').toLowerCase()}`;
+        el.id = `deepdive-${s.signal_id}`;
+        el.innerHTML = `
+          <div class="signal-header">
+            <div class="signal-title">
+              <span class="badge ${statusBadgeClass}">${statusBadgeText}</span>
+              ${isPromoted ? '<span class="badge badge-promoted">⚡ Triggered from Radar</span>' : ''}
+              <span>${s.underlying} — ${optType}</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div class="signal-score">Score: ${s.score ? Number(s.score).toFixed(1) : '--'}/100</div>
+              <button onclick="deleteSignal('${s.signal_id}', event)" style="background:transparent; border:1px solid rgba(239, 68, 68, 0.4); color:#ef4444; border-radius:4px; padding:2px 7px; font-size:12px; cursor:pointer;" title="Delete this signal">🗑️</button>
+            </div>
+          </div>
+          ${milestoneBannerHtml}
+          
+          <div class="signal-meta">
+            <span>Contract: <span class="signal-contract-tag">${contract}</span></span>
+            <span>📅 Expiry: <strong style="color:#e2e8f0;">${expiry}</strong></span>
+            <span class="${riskClass}">${riskIcon} False-Move: ${riskLevel}</span>
+            <span class="signal-contract-tag" style="color:#93c5fd;">📊 ${ofShort}</span>
+            ${s.net_rr_tp1 ? `<span style="color:#34d399; font-weight:600;">Net R:R ${s.net_rr_tp1}:1</span>` : ''}
+            <span style="color:var(--text-muted); font-size:11px;">ID: <code>${s.signal_id}</code></span>
+          </div>
+
+          <div class="signal-levels-grid">
+            <div class="level-box entry-box">
+              <span class="lbl">Entry Price</span>
+              <span class="val">${entryRange}</span>
+            </div>
+            <div class="level-box sl-box">
+              <span class="lbl">Stop Loss (SL)</span>
+              <span class="val">${s.sl_price || '--'}</span>
+            </div>
+            <div class="level-box tp-box">
+              <span class="lbl">Target 1 <span class="tp-conf-chip">${s.tp1_confidence ? s.tp1_confidence + '%' : '85%'}</span></span>
+              <span class="val">${s.tp1_price || '--'}</span>
+            </div>
+            <div class="level-box tp-box">
+              <span class="lbl">Target 2 <span class="tp-conf-chip">${s.tp2_confidence ? s.tp2_confidence + '%' : '65%'}</span></span>
+              <span class="val">${s.tp2_price || '--'}</span>
+            </div>
+            <div class="level-box tp-box">
+              <span class="lbl">Target 3 <span class="tp-conf-chip">${s.tp3_confidence ? s.tp3_confidence + '%' : '42%'}</span></span>
+              <span class="val">${s.tp3_price || '--'}</span>
+            </div>
+          </div>
+
+          <div class="reasons-box">
+            <div class="reasons-title">Strategy Rationale / Technical Evidence</div>
+            <ul class="reasons-list">
+              ${(s.reasons || []).slice(0, 5).map(r => `<li><span style="color:#10b981; font-weight:bold;">✓</span><span>${r}</span></li>`).join('')}
+            </ul>
+          </div>
+
+          <div style="margin-top:10px; display:flex; justify-content:flex-end;">
+            <button onclick="switchSignalsView('clean')" style="background:transparent; border:1px solid #334155; color:#94a3b8; font-size:11px; padding:4px 10px; border-radius:4px; cursor:pointer;">← Back to Clean Feed</button>
+          </div>
+        `;
+        deepContainer.appendChild(el);
+      }
+    }
+
+    function updateSignalsData(newSignals) {
+      if (!newSignals || !Array.isArray(newSignals)) return;
+
+      const currentCards = document.querySelectorAll('.clean-signal-card');
+      const currentCardIds = Array.from(currentCards).map(c => c.dataset.signalId);
+
+      let filtered = newSignals;
+      if (currentSignalFilter === 'ENTRY') {
+        filtered = filtered.filter(s => (s.status || '').toUpperCase() === 'ENTRY');
+      } else if (currentSignalFilter === 'SETUP_DEVELOPING') {
+        filtered = filtered.filter(s => (s.status || '').toUpperCase() === 'SETUP_DEVELOPING');
+      } else if (currentSignalFilter === 'EARLY_WATCH') {
+        filtered = filtered.filter(s => ['EARLY_WATCH', 'WATCH'].includes((s.status || '').toUpperCase()));
+      }
+
+      const newFilteredIds = filtered.map(s => s.signal_id);
+
+      // If card set changed (different count, additions, deletions, or filter changes), do full render
+      const listsMatch = currentCardIds.length === newFilteredIds.length &&
+        currentCardIds.every((id, idx) => id === newFilteredIds[idx]);
+
+      cachedSignals = newSignals;
+
+      if (!listsMatch || currentCards.length === 0) {
+        renderSignalsList();
+        return;
+      }
+
+      // Update counters in header
+      const totalSignals = newSignals.length;
+      const countEntry = newSignals.filter(s => (s.status || '').toUpperCase() === 'ENTRY').length;
+      const countDeveloping = newSignals.filter(s => (s.status || '').toUpperCase() === 'SETUP_DEVELOPING').length;
+      const countEarlyWatch = newSignals.filter(s => ['EARLY_WATCH', 'WATCH'].includes((s.status || '').toUpperCase())).length;
+
+      const cntEl = document.getElementById('signalCount'); if (cntEl) cntEl.innerText = `${totalSignals} Signals`;
+      const cleanCntEl = document.getElementById('cleanSignalCount'); if (cleanCntEl) cleanCntEl.innerText = totalSignals;
+      const deepCntEl = document.getElementById('deepDiveSignalCount'); if (deepCntEl) deepCntEl.innerText = totalSignals;
+      const cAll = document.getElementById('countAll'); if (cAll) cAll.innerText = totalSignals;
+      const cEnt = document.getElementById('countEntry'); if (cEnt) cEnt.innerText = countEntry;
+      const cDev = document.getElementById('countDeveloping'); if (cDev) cDev.innerText = countDeveloping;
+      const cWat = document.getElementById('countEarlyWatch'); if (cWat) cWat.innerText = countEarlyWatch;
+
+      // In-place dynamic updates without DOM rebuilding
+      for (const s of filtered) {
+        const card = document.getElementById(`clean-${s.signal_id}`);
+        if (!card) continue;
+
+        const entryNum = Number(s.entry_price || 0);
+        const liveNum = Number(s.live_price || entryNum || 0);
+        const liveDiffPct = (entryNum > 0 && liveNum > 0) ? ((liveNum - entryNum) / entryNum * 100).toFixed(1) : '0.0';
+        const liveDiffStr = Number(liveDiffPct) >= 0 ? `+${liveDiffPct}%` : `${liveDiffPct}%`;
+        const liveDiffClass = Number(liveDiffPct) >= 0 ? 'color: #34d399;' : 'color: #f87171;';
+        const highestPct = (s.highest_gain_pct != null && Number(s.highest_gain_pct) > 0) ? `+${Number(s.highest_gain_pct).toFixed(1)}%` : '0.0%';
+
+        const liveEl = document.getElementById(`clean-live-${s.signal_id}`);
+        if (liveEl) {
+          const prevLtp = parseFloat(card.dataset.ltp || '0');
+          liveEl.innerHTML = `₹${liveNum > 0 ? liveNum.toFixed(2) : '--'} <span style="font-size:11.5px; font-weight:700; ${liveDiffClass}">(${liveDiffStr})</span>`;
+          if (liveNum > 0 && prevLtp > 0 && Math.abs(liveNum - prevLtp) >= 0.04) {
+            liveEl.classList.remove('flash-tick-up', 'flash-tick-down');
+            void liveEl.offsetWidth; // Force reflow
+            liveEl.classList.add(liveNum > prevLtp ? 'flash-tick-up' : 'flash-tick-down');
+          }
+          card.dataset.ltp = String(liveNum);
+        }
+
+        const peakEl = document.getElementById(`clean-peak-${s.signal_id}`);
+        if (peakEl) {
+          peakEl.innerText = `🚀 ${highestPct}`;
+        }
+
+        const mStatus = (s.momentum_status || 'ACTIVE').toUpperCase();
+        let mBadgeClass = 'badge-momentum-active';
+        let mBadgeText = '🟢 ACTIVE';
+        if (mStatus.includes('BULLISH')) {
+          mBadgeClass = 'badge-momentum-bullish';
+          mBadgeText = '🚀 MORE BULLISH';
+        } else if (mStatus.includes('BEARISH')) {
+          mBadgeClass = 'badge-momentum-bearish';
+          mBadgeText = '🔻 MORE BEARISH';
+        } else if (mStatus.includes('EXPIRED')) {
+          mBadgeClass = 'badge-momentum-expired';
+          mBadgeText = '⌛ EXPIRED';
+        }
+        const mBadgeEl = document.getElementById(`clean-mstatus-${s.signal_id}`);
+        if (mBadgeEl) {
+          mBadgeEl.className = `badge-momentum ${mBadgeClass}`;
+          mBadgeEl.innerText = mBadgeText;
+        }
+      }
+    }
+
+    async function deleteSignal(signalId, event) {
+      if (event) event.stopPropagation();
+      // 1. Optimistic instant UI removal
+      cachedSignals = (cachedSignals || []).filter(s => s.signal_id !== signalId);
+      renderSignalsList();
+      
+      const counts = {
+        all: cachedSignals.length,
+        entry: cachedSignals.filter(s => (s.status || '').toUpperCase() === 'ENTRY').length,
+        developing: cachedSignals.filter(s => (s.status || '').toUpperCase() === 'SETUP_DEVELOPING').length,
+        early_watch: cachedSignals.filter(s => ['EARLY_WATCH', 'WATCH'].includes((s.status || '').toUpperCase())).length,
+      };
+      const cntEl = document.getElementById('signalCount');
+      if (cntEl) cntEl.innerText = `${counts.all} Signals`;
+      const cAll = document.getElementById('countAll'); if (cAll) cAll.innerText = counts.all;
+      const cEnt = document.getElementById('countEntry'); if (cEnt) cEnt.innerText = counts.entry;
+      const cDev = document.getElementById('countDeveloping'); if (cDev) cDev.innerText = counts.developing;
+      const cWat = document.getElementById('countEarlyWatch'); if (cWat) cWat.innerText = counts.early_watch;
+
+      // 2. Background database deletion
+      try {
+        await fetch(`/api/signals/${signalId}`, { method: 'DELETE' });
+      } catch (e) {
+        try {
+          await fetch(`/api/signals/${signalId}/delete`, { method: 'POST' });
+        } catch (e2) {}
+      }
+    }
+
+    async function clearAllSignals() {
+      // 1. Optimistic instant UI wipe
+      cachedSignals = [];
+      renderSignalsList();
+      const cntEl = document.getElementById('signalCount');
+      if (cntEl) cntEl.innerText = '0 Signals';
+      const cAll = document.getElementById('countAll'); if (cAll) cAll.innerText = '0';
+      const cEnt = document.getElementById('countEntry'); if (cEnt) cEnt.innerText = '0';
+      const cDev = document.getElementById('countDeveloping'); if (cDev) cDev.innerText = '0';
+      const cWat = document.getElementById('countEarlyWatch'); if (cWat) cWat.innerText = '0';
+
+      // 2. Background database purge
+      try {
+        await fetch('/api/signals/clear-all', { method: 'DELETE' });
+      } catch (e) {
+        try {
+          await fetch('/api/signals/clear-all', { method: 'POST' });
+        } catch (e2) {}
+      }
+    }
+
+    async function triggerDemoSignal(type = 'ENTRY') {
+      let btn = document.getElementById('testSigBtn');
+      if (type === 'SETUP_DEVELOPING') btn = document.getElementById('testDevBtn');
+      else if (type === 'EARLY_WATCH' || type === 'WATCH') btn = document.getElementById('testWatchBtn');
+      
+      const origText = btn ? btn.innerText : '';
+      if (btn) { btn.disabled = true; btn.innerText = 'Sending...'; }
+      try {
+        const res = await fetch(`/api/signals/test?signal_type=${type}`, { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+          await updateDashboard();
+        } else {
+          alert('Could not dispatch test signal.');
+        }
+      } catch (e) {
+        alert('Error: ' + e);
+      } finally {
+        if (btn) { btn.disabled = false; btn.innerText = origText; }
+      }
+    }
+
+    let selectedOptionsIndex = 'NIFTY';
+    let cachedOptionsData = {};
+    let wsLive = null;
+
+    function renderOptionsGrid(data) {
+      if (!data) return;
+      cachedOptionsData[data.underlying] = data;
+      if (data.underlying !== selectedOptionsIndex) return;
+
+      const spotEl = document.getElementById('optionsSpotInfo');
+      if (spotEl && data.spot_price) {
+        spotEl.innerText = `${data.name || data.underlying} Spot: ₹${Number(data.spot_price).toLocaleString('en-IN', {minimumFractionDigits: 2})} • Expiry: ${data.expiry_tag}`;
+      }
+
+      const grid = document.getElementById('optionsGrid');
+      if (!grid) return;
+
+      if (!data.contracts || data.contracts.length === 0) {
+        grid.innerHTML = `<div style="color: var(--text-muted); font-size: 13px; padding: 20px 0;">No active contracts returned from exchange feed.</div>`;
+        return;
+      }
+
+      // If user switched underlying (e.g. NIFTY to SENSEX), clear grid
+      if (grid.dataset.currentUnderlying !== data.underlying) {
+        grid.innerHTML = '';
+        grid.dataset.currentUnderlying = data.underlying;
+      }
+
+      for (const opt of data.contracts) {
+        const cardId = 'opt-card-' + opt.symbol.replace(/[^a-zA-Z0-9]/g, '_');
+        let card = document.getElementById(cardId);
+
+        const isCall = (opt.option_type === 'CE' || opt.side === 'CALL');
+        const cardClass = isCall ? 'option-item-card call-card' : 'option-item-card put-card';
+        const typeBadgeClass = isCall ? 'opt-type-badge badge-call' : 'opt-type-badge badge-put';
+        const typeLabel = isCall ? 'CALL (CE)' : 'PUT (PE)';
+
+        const isPositive = (opt.change || 0) >= 0;
+        const changeClass = isPositive ? 'change-green' : 'change-red';
+        const changeSign = isPositive ? '+' : '';
+        const changeArrow = isPositive ? '↗' : '↘';
+
+        const deltaStr = (opt.delta != null) ? `${opt.delta > 0 ? '+' : ''}${Number(opt.delta).toFixed(2)}` : '--';
+        const ivStr = (opt.iv != null && opt.iv > 0) ? `${Number(opt.iv).toFixed(1)}%` : '--';
+        const spreadStr = (opt.spread != null) ? `₹${Number(opt.spread).toFixed(2)}` : '0.50';
+        const spreadPctStr = (opt.spread_pct != null) ? `(${Number(opt.spread_pct).toFixed(1)}%)` : '';
+
+        const ltpNum = Number(opt.ltp || 0);
+        const ltpDisplay = `₹${ltpNum.toFixed(2)}`;
+        const changeDisplay = `${changeSign}₹${Math.abs(opt.change || 0).toFixed(2)} (${changeSign}${Number(opt.change_pct || 0).toFixed(1)}%) ${changeArrow}`;
+        const bidAskDisplay = `₹${Number(opt.bid || opt.ltp).toFixed(2)} / ₹${Number(opt.ask || opt.ltp).toFixed(2)}`;
+        const spreadDisplay = `${spreadStr} <small style="font-size:9.5px;">${spreadPctStr}</small>`;
+        const volDisplay = formatVolOI(opt.volume);
+        const oiDisplay = formatVolOI(opt.oi);
+        const deltaIvDisplay = `Δ ${deltaStr} | IV ${ivStr}`;
+
+        if (!card) {
+          // Create new card
+          card = document.createElement('div');
+          card.id = cardId;
+          card.className = cardClass;
+          card.dataset.ltp = String(ltpNum);
+          card.innerHTML = `
+            <div class="option-badge-row">
+              <span class="${typeBadgeClass}">${typeLabel}</span>
+              <span class="opt-expiry-tag">${opt.exchange} • ${data.expiry_tag}</span>
+            </div>
+
+            <div class="option-symbol-title">${opt.symbol}</div>
+
+            <div class="option-price-hero">
+              <span class="option-ltp" id="${cardId}-ltp">${ltpDisplay}</span>
+              <span class="${changeClass}" id="${cardId}-change">${changeDisplay}</span>
+            </div>
+
+            <div class="option-live-action-grid">
+              <div class="action-stat-box">
+                <span class="action-stat-lbl">Bid / Ask</span>
+                <span class="action-stat-val" id="${cardId}-bidask">${bidAskDisplay}</span>
+              </div>
+              <div class="action-stat-box">
+                <span class="action-stat-lbl">Spread</span>
+                <span class="action-stat-val" style="color: #94a3b8;" id="${cardId}-spread">${spreadDisplay}</span>
+              </div>
+              <div class="action-stat-box">
+                <span class="action-stat-lbl">Traded Volume</span>
+                <span class="action-stat-val" id="${cardId}-vol">${volDisplay}</span>
+              </div>
+              <div class="action-stat-box">
+                <span class="action-stat-lbl">Open Interest (OI)</span>
+                <span class="action-stat-val" style="color: #38bdf8;" id="${cardId}-oi">${oiDisplay}</span>
+              </div>
+            </div>
+
+            <div class="option-card-footer">
+              <span>Lot: <strong style="color:#cbd5e1;">${opt.lot_size}</strong> • Strike: <strong style="color:#cbd5e1;">${opt.strike}</strong></span>
+              <span style="color:#a78bfa; font-weight:600; font-family:monospace;" id="${cardId}-deltaiv">${deltaIvDisplay}</span>
+            </div>
+          `;
+          grid.appendChild(card);
+        } else {
+          // In-place dynamic update with tick flash
+          const prevLtp = parseFloat(card.dataset.ltp || '0');
+          const ltpEl = document.getElementById(`${cardId}-ltp`);
+          if (ltpEl) {
+            ltpEl.innerText = ltpDisplay;
+            if (prevLtp > 0 && Math.abs(ltpNum - prevLtp) >= 0.04) {
+              ltpEl.classList.remove('flash-tick-up', 'flash-tick-down');
+              void ltpEl.offsetWidth; // force DOM reflow
+              if (ltpNum > prevLtp) {
+                ltpEl.classList.add('flash-tick-up');
+              } else {
+                ltpEl.classList.add('flash-tick-down');
+              }
+            }
+          }
+          card.dataset.ltp = String(ltpNum);
+
+          const changeEl = document.getElementById(`${cardId}-change`);
+          if (changeEl) {
+            changeEl.className = changeClass;
+            changeEl.innerText = changeDisplay;
+          }
+
+          const bidAskEl = document.getElementById(`${cardId}-bidask`);
+          if (bidAskEl) bidAskEl.innerText = bidAskDisplay;
+
+          const spreadEl = document.getElementById(`${cardId}-spread`);
+          if (spreadEl) spreadEl.innerHTML = spreadDisplay;
+
+          const volEl = document.getElementById(`${cardId}-vol`);
+          if (volEl) volEl.innerText = volDisplay;
+
+          const oiEl = document.getElementById(`${cardId}-oi`);
+          if (oiEl) oiEl.innerText = oiDisplay;
+
+          const deltaIvEl = document.getElementById(`${cardId}-deltaiv`);
+          if (deltaIvEl) deltaIvEl.innerText = deltaIvDisplay;
+        }
+      }
+    }
+
+    async function selectOptionsTab(idx) {
+      selectedOptionsIndex = idx;
+      document.querySelectorAll('.options-tab-btn').forEach(b => b.classList.remove('active'));
+      const activeBtn = document.getElementById(`tab${idx}`);
+      if (activeBtn) activeBtn.classList.add('active');
+
+      // 1. Instant 0ms render from memory cache
+      if (cachedOptionsData[idx]) {
+        renderOptionsGrid(cachedOptionsData[idx]);
+      } else {
+        const spotEl = document.getElementById('optionsSpotInfo');
+        if (spotEl) spotEl.innerText = `${idx} Spot: Syncing live feed...`;
+        const grid = document.getElementById('optionsGrid');
+        if (grid) grid.innerHTML = `<div style="color: #60a5fa; font-size: 13px; padding: 20px 0;"><span class="dot dot-green" style="display:inline-block; margin-right:6px;"></span>Loading ${idx} option chain...</div>`;
+      }
+
+      // 2. Notify live WebSocket stream for instantaneous tick updates
+      if (wsLive && wsLive.readyState === WebSocket.OPEN) {
+        try { wsLive.send(JSON.stringify({ underlying: idx })); } catch(e){}
+      }
+
+      // 3. Background fresh fetch
+      await fetchAndRenderOptionsWatchlist();
+    }
+
+    function formatVolOI(val) {
+      if (!val || val <= 0) return '0';
+      if (val >= 10000000) return (val / 10000000).toFixed(2) + ' Cr';
+      if (val >= 100000) return (val / 100000).toFixed(2) + ' L';
+      if (val >= 1000) return (val / 1000).toFixed(1) + ' K';
+      return Number(val).toLocaleString('en-IN');
+    }
+
+    async function fetchAndRenderOptionsWatchlist() {
+      try {
+        const res = await fetch(`/api/options?underlying=${selectedOptionsIndex}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        renderOptionsGrid(data);
+      } catch (e) {
+        console.error("Error fetching options watchlist:", e);
+      }
+    }
+
+    async function executeContractTrade(opt) {
+      const entryPrice = opt.entry_price || opt.ltp;
+      if (!confirm(`Execute Paper Trade for ${opt.symbol}?\n\nDirection: ${opt.signal_action || opt.side}\nEntry Price: ₹${entryPrice.toFixed(2)}\nLot Size: ${opt.lot_size}\nStop Loss: ₹${(opt.sl || 0).toFixed(2)}\nTarget 1: ₹${(opt.tp1 || 0).toFixed(2)}`)) {
+        return;
+      }
+      try {
+        const payload = {
+          contract_symbol: opt.symbol,
+          underlying: selectedOptionsIndex,
+          side: (opt.option_type === 'CE' || opt.side === 'CALL') ? 'BUY_CE' : 'BUY_PE',
+          strike: opt.strike,
+          entry_price: entryPrice,
+          sl_price: opt.sl,
+          tp1_price: opt.tp1,
+          tp2_price: opt.tp2,
+          tp3_price: opt.tp3,
+          lot_size: opt.lot_size,
+          signal_type: opt.signal_status || 'ENTRY',
+          score: opt.score || 88.0,
+          reason: opt.reason
+        };
+        const res = await fetch('/api/trades/execute_contract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok) {
+          alert(`✅ Paper Trade Executed!\n${data.message}`);
+          await updateDashboard();
+        } else {
+          alert('Could not execute paper trade.');
+        }
+      } catch (e) {
+        alert('Execution error: ' + e);
+      }
+    }
+
+    async function broadcastContractSignal(opt) {
+      const entryPrice = opt.entry_price || opt.ltp;
+      const sigType = (opt.signal_status === 'WATCH' || opt.signal_status === 'WATCH_REVERSAL') ? 'WATCH' : 'ENTRY';
+      try {
+        const payload = {
+          contract_symbol: opt.symbol,
+          underlying: selectedOptionsIndex,
+          side: (opt.option_type === 'CE' || opt.side === 'CALL') ? 'BUY_CE' : 'BUY_PE',
+          signal_type: sigType,
+          strike: opt.strike,
+          entry_price: entryPrice,
+          entry_range: opt.entry_range,
+          sl_price: opt.sl,
+          tp1_price: opt.tp1,
+          tp2_price: opt.tp2,
+          tp3_price: opt.tp3,
+          lot_size: opt.lot_size,
+          score: opt.score || (sigType === 'ENTRY' ? 88.0 : 74.0),
+          reason: opt.reason
+        };
+        const res = await fetch('/api/signals/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok) {
+          alert(`📢 Signal Broadcasted!\n${data.message}`);
+          await updateDashboard();
+        } else {
+          alert('Could not broadcast signal.');
+        }
+      } catch (e) {
+        alert('Broadcast error: ' + e);
+      }
+    }
+
+    function renderTopMetrics(risk, metrics) {
+      if (risk) {
+        // 1. Account Capital
+        const capEl = document.getElementById('capitalVal');
+        const capSub = document.getElementById('capitalSub');
+        const baseCap = Number(risk.capital || 500000);
+        const curCap = Number(risk.current_capital || baseCap);
+        const growth = curCap - baseCap;
+        const growthPct = (growth / baseCap) * 100;
+
+        if (capEl) {
+          capEl.innerText = `₹${curCap.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+        }
+        if (capSub) {
+          if (Math.abs(growth) >= 0.01) {
+            const sign = growth >= 0 ? '+' : '';
+            const color = growth >= 0 ? '#34d399' : '#f87171';
+            capSub.innerHTML = `₹${baseCap.toLocaleString('en-IN')} Base • <span style="color:${color}; font-weight:600;">${sign}₹${Math.abs(growth).toFixed(2)} (${sign}${growthPct.toFixed(2)}%)</span>`;
+          } else {
+            capSub.innerText = `₹${baseCap.toLocaleString('en-IN')} Starting • 0.5% max risk / trade`;
+          }
+        }
+
+        // 2. Realized P&L
+        const pnlEl = document.getElementById('realizedPnlVal');
+        const pnlSub = document.getElementById('pnlSub');
+        const totalPnl = (risk.total_realized_pnl !== undefined) ? Number(risk.total_realized_pnl) : Number(risk.realized_pnl || 0);
+        const sessionPnl = (risk.session_realized_pnl !== undefined) ? Number(risk.session_realized_pnl) : Number(risk.realized_pnl || 0);
+        
+        // Display session P&L if today's session has trades; otherwise display total realized P&L so realized profit is never hidden as ₹0.00
+        const displayPnl = sessionPnl !== 0 ? sessionPnl : totalPnl;
+        if (pnlEl) {
+          pnlEl.innerText = (displayPnl >= 0 ? '+₹' : '-₹') + Math.abs(displayPnl).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+          pnlEl.className = displayPnl >= 0 ? 'metric-value pnl-green' : 'metric-value pnl-red';
+        }
+        if (pnlSub) {
+          const sSign = sessionPnl >= 0 ? '+' : '-';
+          const tSign = totalPnl >= 0 ? '+' : '-';
+          pnlSub.innerText = `Today: ${sSign}₹${Math.abs(sessionPnl).toFixed(2)} • Total Net: ${tSign}₹${Math.abs(totalPnl).toFixed(2)} (${risk.total_closed_trades || 0} Trades)`;
+        }
+
+        const lockBadge = document.getElementById('riskLockBadge');
+        if (lockBadge) {
+          if (risk.trading_locked) {
+            lockBadge.className = 'badge badge-locked';
+            lockBadge.innerText = 'LOCKED: ' + (risk.lock_reason || 'Locked');
+          } else {
+            lockBadge.className = 'badge badge-active';
+            lockBadge.innerText = 'Risk Unlocked';
+          }
+        }
+      }
+
+      if (metrics) {
+        const winRateEl = document.getElementById('winRateVal');
+        const expSub = document.getElementById('expectancySub');
+        const pfEl = document.getElementById('profitFactorVal');
+        const ddSub = document.getElementById('drawdownSub');
+
+        if (winRateEl) {
+          winRateEl.innerText = (metrics.total_trades > 0) ? `${Number(metrics.win_rate_pct).toFixed(1)}%` : '--%';
+          winRateEl.className = (metrics.win_rate_pct >= 50) ? 'metric-value pnl-green' : 'metric-value';
+        }
+        if (expSub) {
+          expSub.innerText = `Expectancy: ₹${Number(metrics.expectancy_per_trade || 0).toFixed(2)} / trade (${metrics.total_trades || 0} trades)`;
+        }
+        if (pfEl) {
+          pfEl.innerText = metrics.profit_factor > 0 ? Number(metrics.profit_factor).toFixed(2) : '--';
+        }
+        if (ddSub) {
+          ddSub.innerText = `Max DD: ${Number(metrics.max_drawdown_pct || 0).toFixed(1)}% (₹${Number(metrics.max_drawdown_amount || 0).toFixed(0)})`;
+        }
+      }
+    }
+
+    function renderIndicesCards(indicesData) {
+      const grid = document.getElementById('indicesGrid');
+      if (!grid || !indicesData) return;
+
+      for (const [sym, info] of Object.entries(indicesData)) {
+        const cardId = `idx-card-${sym}`;
+        let card = document.getElementById(cardId);
+
+        const ltpNum = Number(info.ltp || 0);
+        const ltpDisplay = ltpNum > 0 ? `₹${ltpNum.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : 'Syncing feed...';
+        const ceLtp = Number(info.atm_ce_ltp || 0);
+        const peLtp = Number(info.atm_pe_ltp || 0);
+        const atmStrike = info.atm_strike || 0;
+
+        if (!card) {
+          card = document.createElement('div');
+          card.id = cardId;
+          card.className = 'index-card';
+          card.dataset.ltp = String(ltpNum);
+          card.dataset.ceLtp = String(ceLtp);
+          card.dataset.peLtp = String(peLtp);
+
+          card.innerHTML = `
+            <div class="index-exchange">${info.exchange} • ${info.contract_type || 'Weekly'}: ${info.expiry_date || info.primary_expiry_day}</div>
+            <div class="index-name">${sym}</div>
+            <div style="display:flex; justify-content:space-between; align-items:baseline; margin: 4px 0;">
+              <span style="font-size: 11px; color: var(--text-muted); text-transform:uppercase;">Spot Index:</span>
+              <span style="font-size: 15px; font-weight: 700; color: #38bdf8;" id="${cardId}-spot">${ltpDisplay}</span>
+            </div>
+            <div style="background:#0f172a; padding:6px 8px; border-radius:6px; margin:6px 0; border: 1px solid #1e293b;">
+              <div style="font-size: 11px; color: #38bdf8; font-weight:700; margin-bottom:4px;" id="${cardId}-atmlbl">ATM ${atmStrike} OPTIONS:</div>
+              <div style="display:flex; justify-content:space-between; font-size:12px;">
+                <span style="color:#10b981; font-weight:700;" id="${cardId}-ce">CE: ₹${ceLtp.toFixed(2)}</span>
+                <span style="color:#f87171; font-weight:700;" id="${cardId}-pe">PE: ₹${peLtp.toFixed(2)}</span>
+              </div>
+            </div>
+            <div class="index-meta" id="${cardId}-meta">
+              Lot: ${info.lot_size} | Step: ${info.strike_interval}<br>
+              5m Bars: ${info.completed_5m_bars || 0}
+            </div>
+          `;
+          grid.appendChild(card);
+        } else {
+          // In-place dynamic update with tick flash animations
+          const prevLtp = parseFloat(card.dataset.ltp || '0');
+          const spotEl = document.getElementById(`${cardId}-spot`);
+          if (spotEl) {
+            spotEl.innerText = ltpDisplay;
+            if (ltpNum > 0 && prevLtp > 0 && Math.abs(ltpNum - prevLtp) >= 0.05) {
+              const anim = ltpNum > prevLtp ? 'flash-tick-up' : 'flash-tick-down';
+              spotEl.classList.remove('flash-tick-up', 'flash-tick-down');
+              void spotEl.offsetWidth;
+              spotEl.classList.add(anim);
+            }
+          }
+          card.dataset.ltp = String(ltpNum);
+
+          const atmLbl = document.getElementById(`${cardId}-atmlbl`);
+          if (atmLbl && atmStrike > 0) atmLbl.innerText = `ATM ${atmStrike} OPTIONS:`;
+
+          const ceEl = document.getElementById(`${cardId}-ce`);
+          if (ceEl) {
+            ceEl.innerText = `CE: ₹${ceLtp.toFixed(2)}`;
+            const prevCe = parseFloat(card.dataset.ceLtp || '0');
+            if (ceLtp > 0 && prevCe > 0 && Math.abs(ceLtp - prevCe) >= 0.05) {
+              const anim = ceLtp > prevCe ? 'flash-tick-up' : 'flash-tick-down';
+              ceEl.classList.remove('flash-tick-up', 'flash-tick-down');
+              void ceEl.offsetWidth;
+              ceEl.classList.add(anim);
+            }
+            card.dataset.ceLtp = String(ceLtp);
+          }
+
+          const peEl = document.getElementById(`${cardId}-pe`);
+          if (peEl) {
+            peEl.innerText = `PE: ₹${peLtp.toFixed(2)}`;
+            const prevPe = parseFloat(card.dataset.peLtp || '0');
+            if (peLtp > 0 && prevPe > 0 && Math.abs(peLtp - prevPe) >= 0.05) {
+              const anim = peLtp > prevPe ? 'flash-tick-up' : 'flash-tick-down';
+              peEl.classList.remove('flash-tick-up', 'flash-tick-down');
+              void peEl.offsetWidth;
+              peEl.classList.add(anim);
+            }
+            card.dataset.peLtp = String(peLtp);
+          }
+
+          const metaEl = document.getElementById(`${cardId}-meta`);
+          if (metaEl) {
+            metaEl.innerHTML = `Lot: ${info.lot_size} | Step: ${info.strike_interval}<br>5m Bars: ${info.completed_5m_bars || 0}`;
+          }
+        }
+      }
+    }
+
+    let cachedOpenTrades = [];
+    let cachedClosedTrades = [];
+    let currentTradesView = 'active';
+
+    function switchTradesView(view) {
+      currentTradesView = view;
+      const bAct = document.getElementById('btnTabActiveTrades');
+      const bHis = document.getElementById('btnTabHistoryTrades');
+      const vAct = document.getElementById('activeTradesView');
+      const vHis = document.getElementById('historyTradesView');
+      const sub = document.getElementById('tradesTabSubtitle');
+
+      if (view === 'active') {
+        if (bAct) bAct.classList.add('active');
+        if (bHis) bHis.classList.remove('active');
+        if (vAct) vAct.style.display = 'block';
+        if (vHis) vHis.style.display = 'none';
+        if (sub) sub.innerText = 'Live Active Positions (Manual Close available)';
+      } else {
+        if (bAct) bAct.classList.remove('active');
+        if (bHis) bHis.classList.add('active');
+        if (vAct) vAct.style.display = 'none';
+        if (vHis) vHis.style.display = 'block';
+        if (sub) sub.innerText = 'Complete Log of Closed Trades (TP Hit, SL Hit, Manual Exit)';
+      }
+    }
+
+    async function closeActiveTrade(tradeId, contractSymbol, ltp) {
+      const displaySym = contractSymbol || 'Position';
+      const priceText = (ltp != null && ltp > 0) ? `₹${Number(ltp).toFixed(2)}` : 'Live Market Price';
+      if (!confirm(`Are you sure you want to close ${displaySym} (#${tradeId}) at ${priceText}?\n\nThe position will exit immediately and move to Trade History.`)) {
+        return;
+      }
+
+      // 1. Optimistic instant UI update: remove from open trades, move to closed trades
+      const foundIdx = (cachedOpenTrades || []).findIndex(t => t.trade_id === tradeId);
+      if (foundIdx !== -1) {
+        const closedT = { ...cachedOpenTrades[foundIdx] };
+        cachedOpenTrades.splice(foundIdx, 1);
+        const exitPrice = ltp || closedT.current_price || closedT.entry_price;
+        closedT.exit_price = exitPrice;
+        closedT.exit_reason = 'MANUAL_CLOSE';
+        closedT.exit_time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+        const entryP = closedT.entry_price || 1;
+        closedT.pnl_pct = (closedT.direction && closedT.direction.includes('SELL'))
+          ? Number((((entryP - exitPrice) / entryP) * 100).toFixed(2))
+          : Number((((exitPrice - entryP) / entryP) * 100).toFixed(2));
+        cachedClosedTrades.unshift(closedT);
+        renderTradesTable(cachedOpenTrades, cachedClosedTrades);
+      }
+
+      // 2. Call backend endpoint to close trade
+      try {
+        const res = await fetch(`/api/trades/${tradeId}/close`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(`Could not close trade: ${data.detail || 'Unknown error'}`);
+        }
+        await updateDashboard();
+      } catch (err) {
+        console.error("Error closing trade:", err);
+        alert(`Network error closing trade: ${err}`);
+      }
+    }
+
+    function renderTradesTable(openTrades, closedTrades) {
+      if (openTrades !== undefined) cachedOpenTrades = openTrades || [];
+      if (closedTrades !== undefined) cachedClosedTrades = closedTrades || [];
+
+      // 1. Update tab counts
+      const countEl = document.getElementById('tradeCount');
+      if (countEl) countEl.innerText = `${cachedOpenTrades.length}`;
+      const histCountEl = document.getElementById('historyCount');
+      if (histCountEl) histCountEl.innerText = `${cachedClosedTrades.length}`;
+
+      // 2. Render Active Positions Table
+      const tbodyOpen = document.getElementById('tradesTable');
+      if (tbodyOpen) {
+        if (cachedOpenTrades.length === 0) {
+          tbodyOpen.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 30px;">No active paper positions currently open.</td></tr>`;
+        } else {
+          tbodyOpen.innerHTML = '';
+          for (const t of cachedOpenTrades) {
+            const tr = document.createElement('tr');
+            const pnl = t.total_live_pnl != null ? t.total_live_pnl : (t.unrealized_pnl || 0);
+            const pnlClass = pnl >= 0 ? 'pnl-green' : 'pnl-red';
+            const livePrice = t.current_price != null ? t.current_price : t.entry_price;
+            const entryPriceStr = t.entry_price != null ? `₹${Number(t.entry_price).toFixed(2)}` : '--';
+            const livePriceStr = `₹${Number(livePrice).toFixed(2)} <span style="color:#38bdf8; font-size:10.5px; font-weight:700;">(Live)</span>`;
+
+            const qtyDisplay = t.is_tp1_booked
+              ? `${t.quantity} Units <br><span style="color:#34d399; font-size:10px; font-weight:700;">(80% Booked @ TP1, 20% Runner)</span>`
+              : `${t.lots || 1} Lots (${t.quantity || 75} Qty)`;
+            const bookedBadge = (t.booked_pnl && t.booked_pnl > 0)
+              ? `<br><span style="color:#34d399; font-size:10px; font-weight:600;">(+₹${Number(t.booked_pnl).toFixed(2)} locked)</span>`
+              : '';
+
+            const investedAmt = (t.invested_amount != null)
+              ? t.invested_amount
+              : ((t.entry_price || 0) * (t.quantity || 1));
+            const currentVal = (t.current_value != null)
+              ? t.current_value
+              : (livePrice * (t.quantity || 1));
+            const investedStr = `₹${Number(investedAmt).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            const currentValStr = `₹${Number(currentVal).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            const valColor = pnl >= 0 ? '#34d399' : '#f87171';
+
+            const pnlPct = t.pnl_pct != null
+              ? t.pnl_pct
+              : (t.entry_price > 0 ? (((livePrice - t.entry_price) / t.entry_price) * 100) : 0);
+            const pctSign = pnlPct >= 0 ? '+' : '';
+            const pctClass = pnlPct >= 0 ? 'pnl-green' : 'pnl-red';
+
+            tr.innerHTML = `
+              <td><b>${t.underlying}</b><br><small style="color:var(--text-muted); font-size:11px;">${t.contract || ''}</small></td>
+              <td><span class="badge" style="background:#1e293b;">${t.direction}</span></td>
+              <td>${entryPriceStr}</td>
+              <td>${livePriceStr}</td>
+              <td><b style="color:#e2e8f0;">${investedStr}</b></td>
+              <td><b style="color:${valColor};">${currentValStr}</b></td>
+              <td>${qtyDisplay}</td>
+              <td>
+                <span class="${pnlClass}">${pnl >= 0 ? '+₹' : '-₹'}${Math.abs(pnl).toFixed(2)}</span>
+                <span class="${pctClass}" style="font-size:11px; margin-left:4px;">(${pctSign}${Number(pnlPct).toFixed(1)}%)</span>
+                ${bookedBadge}
+              </td>
+              <td style="text-align: center;">
+                <button class="btn-close-position" onclick="closeActiveTrade('${t.trade_id}', '${t.contract || t.underlying}', ${Number(livePrice).toFixed(2)})" title="Close this position immediately at current live market price">
+                  ✕ Close
+                </button>
+              </td>
+            `;
+            tbodyOpen.appendChild(tr);
+          }
+        }
+      }
+
+      // 3. Render Trade History Table
+      const tbodyHist = document.getElementById('historyTable');
+      if (tbodyHist) {
+        if (cachedClosedTrades.length === 0) {
+          tbodyHist.innerHTML = `<tr><td colspan="12" style="text-align: center; color: var(--text-muted); padding: 30px;">No closed trades in history yet.</td></tr>`;
+        } else {
+          tbodyHist.innerHTML = '';
+          for (const t of cachedClosedTrades) {
+            const tr = document.createElement('tr');
+            const netPnl = t.net_pnl || 0;
+            const pnlClass = netPnl >= 0 ? 'pnl-green' : 'pnl-red';
+            const exitPrice = t.exit_price || t.entry_price;
+            const entryPriceStr = t.entry_price != null ? `₹${Number(t.entry_price).toFixed(2)}` : '--';
+            const exitPriceStr = exitPrice != null ? `₹${Number(exitPrice).toFixed(2)}` : '--';
+
+            const qty = t.quantity || 1;
+            const investedAmt = (t.invested_amount != null) ? t.invested_amount : ((t.entry_price || 0) * qty);
+            const exitVal = (t.current_value != null) ? t.current_value : (exitPrice * qty);
+            const investedStr = `₹${Number(investedAmt).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            const exitValStr = `₹${Number(exitVal).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+
+            // % Profit from entry point to avg closed point
+            const pnlPct = t.pnl_pct != null
+              ? t.pnl_pct
+              : (t.entry_price > 0 ? (((exitPrice - t.entry_price) / t.entry_price) * 100) : 0);
+            const pctSign = pnlPct >= 0 ? '+' : '';
+            const pctBadge = pnlPct >= 0 ? 'badge-pnl-pct-green' : 'badge-pnl-pct-red';
+
+            // Exit reason styling
+            const reason = (t.exit_reason || 'CLOSED').toUpperCase();
+            let reasonBadge = `<span class="badge" style="background:#334155;">${reason}</span>`;
+            if (reason.includes('TP1_BOOKED_BREAKEVEN') || (reason.includes('TP1') && reason.includes('BREAKEVEN'))) {
+              reasonBadge = `<span class="badge-reason-tp">🎯 TP1 HIT (RUNNER BE EXIT)</span>`;
+            } else if (reason.includes('TP1')) {
+              reasonBadge = `<span class="badge-reason-tp">🎯 TP1 BOOKED</span>`;
+            } else if (reason.includes('TP2') || reason.includes('TP3')) {
+              reasonBadge = `<span class="badge-reason-tp">🚀 ${reason}</span>`;
+            } else if (reason.includes('BREAKEVEN')) {
+              reasonBadge = `<span class="badge" style="background:rgba(59, 130, 246, 0.2); color:#60a5fa; border:1px solid #3b82f6;">🛡️ BREAKEVEN SL</span>`;
+            } else if (reason.includes('SL')) {
+              reasonBadge = `<span class="badge-reason-sl">🛑 SL HIT</span>`;
+            } else if (reason.includes('MANUAL')) {
+              reasonBadge = `<span class="badge-reason-manual">✋ MANUAL CLOSE</span>`;
+            }
+
+            const entryTimeStr = t.entry_time || '--';
+            const exitTimeStr = t.exit_time || '--';
+
+            tr.innerHTML = `
+              <td><b>${t.underlying}</b><br><small style="color:var(--text-muted); font-size:11px;">${t.contract || ''}</small></td>
+              <td><span class="badge" style="background:#1e293b;">${t.direction}</span></td>
+              <td>${entryPriceStr}</td>
+              <td><b>${exitPriceStr}</b></td>
+              <td><b style="color:#cbd5e1;">${investedStr}</b></td>
+              <td><b style="color:#e2e8f0;">${exitValStr}</b></td>
+              <td>${t.lots || 1} Lots (${qty} Qty)</td>
+              <td class="${pnlClass}">${netPnl >= 0 ? '+₹' : '-₹'}${Math.abs(netPnl).toFixed(2)}</td>
+              <td><span class="${pctBadge}">${pctSign}${Number(pnlPct).toFixed(2)}%</span></td>
+              <td style="color:#94a3b8; font-size:11px; white-space:nowrap;">${entryTimeStr}</td>
+              <td style="color:#cbd5e1; font-size:11px; font-weight:600; white-space:nowrap;">${exitTimeStr}</td>
+              <td>${reasonBadge}</td>
+            `;
+            tbodyHist.appendChild(tr);
+          }
+        }
+      }
+    }
+
+    function initLiveWebSocket() {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${location.host}/api/ws/live`;
+      try {
+        wsLive = new WebSocket(wsUrl);
+        wsLive.onopen = () => {
+          console.log("⚡ Live WebSocket stream connected");
+          const dot = document.getElementById('brokerDot');
+          if (dot) dot.className = 'dot dot-green';
+          const lbl = document.getElementById('brokerLabel');
+          if (lbl) lbl.innerText = 'Feed: Real-time WebSocket (200ms)';
+          wsLive.send(JSON.stringify({ underlying: selectedOptionsIndex }));
+        };
+        wsLive.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'LIVE_TICK') {
+              if (data.options) {
+                if (data.options.underlying === selectedOptionsIndex) {
+                  renderOptionsGrid(data.options);
+                } else {
+                  cachedOptionsData[data.options.underlying] = data.options;
+                }
+              }
+              if (data.indices) {
+                renderIndicesCards(data.indices);
+              }
+              if (data.open_trades !== undefined || data.closed_trades !== undefined) {
+                renderTradesTable(data.open_trades, data.closed_trades);
+              }
+              if (data.risk || data.metrics) {
+                renderTopMetrics(data.risk, data.metrics);
+              }
+              if (data.signals !== undefined && Array.isArray(data.signals)) {
+                updateSignalsData(data.signals);
+              }
+            }
+          } catch(e) {}
+        };
+        wsLive.onclose = () => {
+          setTimeout(initLiveWebSocket, 2000);
+        };
+        wsLive.onerror = () => {
+          try { wsLive.close(); } catch(e){}
+        };
+      } catch (err) {
+        console.error("Failed to init WebSocket:", err);
+      }
+    }
+
+    async function prewarmAllOptionChains() {
+      const indices = ['NIFTY', 'SENSEX'];
+      for (const idx of indices) {
+        fetch(`/api/options?underlying=${idx}`)
+          .then(r => r.json())
+          .then(d => {
+            cachedOptionsData[idx] = d;
+            if (selectedOptionsIndex === idx) renderOptionsGrid(d);
+          })
+          .catch(() => {});
+      }
+    }
+
+    // Refresh background state every 5 seconds (real-time ticks stream continuously via WebSocket)
+    setInterval(updateDashboard, 5000);
+    updateDashboard();
+    initLiveWebSocket();
+    prewarmAllOptionChains();
+  </script>
+
+  <!-- Modal Dialog for Instant Deep-Dive View -->
+  <div id="signalModal" class="modal-backdrop" style="display:none;" onclick="closeSignalModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 id="modalTitle" style="margin:0; font-size:15px; color:#f8fafc; display:flex; align-items:center; gap:8px;">Signal Deep-Dive</h3>
+        <button onclick="closeSignalModal()" class="modal-close-btn">&times;</button>
+      </div>
+      <div id="modalBody" style="padding:16px;"></div>
+    </div>
+  </div>
+</body>
+</html>
