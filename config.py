@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     PAPER_TRADING_MODE: bool = True
     ENABLE_LIVE_ORDERS: bool = False  # Hard safety gate
     ALLOW_SIMULATED_ENTRIES: bool = False  # Disallow entries derived from simulated feeds in production
-    ENFORCE_MARKET_HOURS: bool = False  # If True, scanner only evaluates during 09:15-15:30 IST; False allows scanning on available market feeds
+    ENFORCE_MARKET_HOURS: bool = False  # Live signals are restricted to the active exchange session
 
     DATABASE_URL: str = (
         "sqlite+aiosqlite:////tmp/trading.db"
@@ -95,26 +95,45 @@ class Settings(BaseSettings):
     # Capital & Risk Parameters (Deterministic Safety Rules)
     ACCOUNT_CAPITAL: float = 500000.0  # ₹5,00,000 INR default paper capital
     RISK_PER_TRADE_PCT: float = 0.005   # 0.5% max risk per trade (₹2,500)
-    ENABLE_DAILY_STOP_LOSS: bool = False  # Disabled 1.0% daily stop per user request
-    MAX_DAILY_LOSS_PCT: Optional[float] = None  # Disabled daily stop loss percentage
+    ENABLE_DAILY_STOP_LOSS: bool = False
+    MAX_DAILY_LOSS_PCT: Optional[float] = None
     MAX_DAILY_STOP_LOSSES: int = 2      # Max 2 consecutive/planned stop-outs (when daily stop enabled)
     MAX_CONCURRENT_TRADES: int = 2      # Max 2 open positions at any time
     MAX_CORRELATED_EXPOSURE: int = 1    # Max 1 trade per correlated index cluster (e.g. NIFTY + SENSEX)
     MAX_TRADE_CAPITAL_ALLOCATION_PCT: float = 0.20  # Max 20% capital in single options trade
 
     # Data Staleness & Latency Limits
-    MAX_QUOTE_STALENESS_SECONDS: float = 3.0  # Max acceptable delay for live tick (ultra-low latency)
+    MAX_QUOTE_STALENESS_SECONDS: float = 15.0  # Max acceptable delay for live tick (ultra-low latency)
     HEARTBEAT_INTERVAL_SECONDS: int = 10
     WS_RECONNECT_MAX_ATTEMPTS: int = 10
     WS_RECONNECT_BASE_DELAY_SECONDS: float = 2.0
 
     # Staged Signal Engine Confidence Thresholds
-    SCORE_EARLY_WATCH: float = 50.0
-    SCORE_SETUP_DEVELOPING: float = 62.0
+    SCORE_EARLY_WATCH: float = 48.0
+    SCORE_SETUP_DEVELOPING: float = 60.0
     SCORE_ENTRY_QUALIFIED: float = 72.0
     MIN_SCORE_FOR_ENTRY: float = 72.0   # Backwards compatibility alias
-    MIN_SCORE_FOR_WATCH: float = 50.0   # Backwards compatibility alias
+    MIN_SCORE_FOR_WATCH: float = 48.0   # Backwards compatibility alias
     SCANNER_INTERVAL_SECONDS: int = 2  # 2-second balanced autonomous scanner loop
+
+    # Early breakout radar: more sensitive than entry qualification; alerts only.
+    EARLY_WATCH_1M_PROXIMITY_PCT: float = 0.15
+    EARLY_WATCH_1M_MIN_BODY_RATIO: float = 0.30
+    EARLY_WATCH_5M_PROXIMITY_PCT: float = 0.25
+    EARLY_WATCH_5M_MIN_BODY_RATIO: float = 0.30
+    RADAR_MAX_SPREAD_PCT: float = 3.0
+    RADAR_MIN_VOLUME_RATIO: float = 0.35
+    RADAR_MIN_OI_RATIO: float = 0.50
+    RADAR_MIN_VOLUME_CONTRACTS: int = 500
+    RADAR_MIN_OI_CONTRACTS: int = 1000
+    RADAR_DELTA_MIN: float = 0.40
+    RADAR_DELTA_MAX: float = 0.70
+    MIN_RVOL_FOR_DEVELOPING: float = 1.0
+    MAX_BREAKOUT_EXTENSION_ATR: float = 2.0
+    RVOL_STRONG_THRESHOLD: float = 1.5
+    RVOL_MODERATE_THRESHOLD: float = 1.2
+    CANDLE_BODY_STRONG_RATIO: float = 0.70
+    CANDLE_BODY_WEAK_RATIO: float = 0.35
 
     # False Move & Absorption Risk Parameters
     ABSORPTION_RVOL_THRESHOLD: float = 1.8
@@ -160,7 +179,7 @@ class Settings(BaseSettings):
     FALSE_MOVE_MODERATE_PENALTY: float = 8.0
 
     # Entry Trigger Modes: CONSERVATIVE (5m close), BALANCED (1m breakout + 5m context), FAST (validated tick/intrabar)
-    ENTRY_TRIGGER_MODE: str = "CONSERVATIVE"
+    ENTRY_TRIGGER_MODE: str = "BALANCED"
     FAST_MODE_MAX_STALENESS_SECONDS: float = 2.0
     FAST_MODE_MAX_SPREAD_RATIO: float = 0.8
     FAST_MODE_MIN_TICK_PERSISTENCE: int = 3
@@ -179,7 +198,7 @@ class Settings(BaseSettings):
                 lot_size=65,  # Revised NSE standard contract lot
                 tick_size=0.05,
                 strike_interval=50.0,
-                primary_expiry_day="Tuesday",
+                primary_expiry_day="Thursday",
                 enabled=True,
                 orb_period_minutes=15,
                 atr_period=14,
@@ -251,7 +270,7 @@ class Settings(BaseSettings):
                 lot_size=20,  # Verified BSE SENSEX contract lot
                 tick_size=0.05,
                 strike_interval=100.0,
-                primary_expiry_day="Thursday",
+                primary_expiry_day="Friday",
                 enabled=True,
                 orb_period_minutes=15,
                 atr_period=14,

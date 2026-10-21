@@ -50,12 +50,30 @@ class ContractSelector:
         max_spread_pct: float = 2.0,
         delta_min: float = 0.45,
         delta_max: float = 0.65,
+        radar_mode: bool = False,
     ) -> Tuple[Optional[SelectedContract], List[str]]:
         rejection_reasons: List[str] = []
         underlying = snapshot.underlying
         cfg = instrument_master.get_index_config(underlying)
         if not cfg:
             return None, [f"No index configuration found for {underlying}"]
+
+        min_volume = cfg.min_volume_contracts
+        min_oi = cfg.min_oi_contracts
+        if radar_mode:
+            # Radar selection is only for an alert, never for an executable
+            # entry. Keep real quotes/Greeks but allow earlier, thinner buildup.
+            max_spread_pct = max(max_spread_pct, settings.RADAR_MAX_SPREAD_PCT)
+            delta_min = settings.RADAR_DELTA_MIN
+            delta_max = settings.RADAR_DELTA_MAX
+            min_volume = max(
+                settings.RADAR_MIN_VOLUME_CONTRACTS,
+                int(cfg.min_volume_contracts * settings.RADAR_MIN_VOLUME_RATIO),
+            )
+            min_oi = max(
+                settings.RADAR_MIN_OI_CONTRACTS,
+                int(cfg.min_oi_contracts * settings.RADAR_MIN_OI_RATIO),
+            )
 
         opt_type = "CE" if direction == "BUY_CE" else "PE"
         candidates: List[OptionContractData] = []
@@ -83,13 +101,13 @@ class ContractSelector:
                 continue
 
             # 3. Minimum liquidity test
-            if (c.volume or 0) < cfg.min_volume_contracts:
+            if (c.volume or 0) < min_volume:
                 continue
-            if (c.oi or 0) < cfg.min_oi_contracts:
+            if (c.oi or 0) < min_oi:
                 continue
 
             # 4. Delta check (absolute value between delta_min and delta_max)
-            abs_delta = 0.50
+            abs_delta = None
             gamma = 0.001
             iv = 14.0
             if c.greeks:
@@ -100,7 +118,13 @@ class ContractSelector:
                 if c.greeks.iv is not None:
                     iv = c.greeks.iv
 
-            if abs_delta < delta_min or abs_delta > delta_max:
+            # Fallback delta estimation if broker feed omitted Greeks
+            if abs_delta is None and spot > 0 and c.strike > 0:
+                dist_pct = (spot - c.strike) / spot if opt_type == "CE" else (c.strike - spot) / spot
+                approx = 0.50 + (dist_pct * 10.0)
+                abs_delta = max(0.10, min(0.90, round(approx, 2)))
+
+            if abs_delta is None or abs_delta < delta_min or abs_delta > delta_max:
                 continue
 
             # Valid candidate selected!

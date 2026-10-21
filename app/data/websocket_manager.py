@@ -46,6 +46,9 @@ class WebSocketFeedManager:
 
     async def start(self) -> None:
         self._is_running = True
+        # Register once for the provider lifetime; reconnects must not multiply
+        # handlers and duplicate ticks/candle volume.
+        self.provider.register_quote_callback(self._on_quote_received)
         self._task = asyncio.create_task(self._run_loop())
         logger.info(f"WebSocketFeedManager started with provider: {self.provider.name}")
 
@@ -77,9 +80,6 @@ class WebSocketFeedManager:
                 if self._subscribed_instruments:
                     await self.provider.subscribe_quotes(list(self._subscribed_instruments))
                     logger.info(f"Resubscribed {len(self._subscribed_instruments)} instruments.")
-
-                # Register internal quote listener from provider
-                self.provider.register_quote_callback(self._on_quote_received)
 
                 # Keep connection alive and monitor health
                 while self._is_running and self.provider.is_connected:

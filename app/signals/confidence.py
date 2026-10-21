@@ -80,19 +80,19 @@ class ConfidenceEvaluator:
 
         # 2. Entry Confirmation & Candle Body Strength (Max 20)
         # Scaled continuously; 0.50 target is a scoring factor, NOT hard rejection
-        if candle_body_strength >= 0.70:
+        if candle_body_strength >= settings.CANDLE_BODY_STRONG_RATIO:
             breakdown.entry_confirmation = 20.0
         elif candle_body_strength >= settings.CANDLE_BODY_RATIO_TARGET:
             breakdown.entry_confirmation = 14.0
-        elif candle_body_strength >= 0.35:
+        elif candle_body_strength >= settings.CANDLE_BODY_WEAK_RATIO:
             breakdown.entry_confirmation = 8.0
         else:
             breakdown.entry_confirmation = 2.0
 
         # 3. Volume & Participation (Max 15)
-        if rvol >= 1.5:
+        if rvol >= settings.RVOL_STRONG_THRESHOLD:
             breakdown.volume_participation = 15.0
-        elif rvol >= 1.2:
+        elif rvol >= settings.RVOL_MODERATE_THRESHOLD:
             breakdown.volume_participation = 11.0
         elif rvol >= 1.0:
             breakdown.volume_participation = 7.0
@@ -208,7 +208,7 @@ class ConfidenceEvaluator:
         failed: List[str] = []
 
         if is_quote_fresh:
-            passed.append("Quote Freshness Gate (<5s latency)")
+            passed.append(f"Quote Freshness Gate (<={settings.MAX_QUOTE_STALENESS_SECONDS:g}s latency)")
         else:
             failed.append("Quote Freshness Gate: Stale data detected")
 

@@ -209,7 +209,7 @@ async def try_fire_entry(candidate: SignalCandidate, risk_state: RiskState) -> b
     """Atomic unified entry executor with per-underlying locking, deterministic deduplication,
     cooldown enforcement, and paper trade execution.
     """
-    if not repository:
+    if not repository or candidate.signal.status != "ENTRY" or not candidate.passed_all_gates:
         return False
 
     und = candidate.signal.underlying
@@ -260,20 +260,51 @@ async def try_fire_entry(candidate: SignalCandidate, risk_state: RiskState) -> b
             logger.debug(f"Entry blocked for {und}: trading locked ({risk_state.lock_reason}).")
             return False
 
-        # 6. Execute atomic persistence and paper order
-        await repository.create_signal(candidate.signal, candidate.levels)
-        logger.info(
-            f"🎯 [AUTO-ENTRY] Fired qualified ENTRY signal for {und}: "
-            f"{candidate.signal.side} @ score {candidate.signal.score}/100 [Key: {candidate.signal.setup_key}]"
-        )
-
+        # Open in memory first so a risk/size rejection cannot leave a false
+        # ENTRY signal in the feed. Signal, levels and paper trade are then
+        # persisted together in one database transaction.
+        previous_open_risk = risk_state.open_risk
+        original_signal_id = candidate.signal.signal_id
         paper_trade = paper_trading_engine.open_trade(
             signal=candidate.signal,
             levels=candidate.levels,
             lot_size=candidate.contract.lot_size,
             risk_state=risk_state,
         )
-        entry_price = paper_trade.entry_price if paper_trade else candidate.levels.entry_range_high
+        if not paper_trade:
+            logger.info(
+                f"[ENTRY REJECTED] {und} passed signal qualification but paper execution "
+                "was rejected by position sizing or entry-price limits."
+            )
+            if risk_state.trading_locked:
+                await repository.update_risk_state(risk_state)
+            return False
+
+        try:
+            persisted_signal_id = await repository.create_signal(
+                candidate.signal,
+                candidate.levels,
+                paper_trade=paper_trade,
+            )
+        except Exception as exc:
+            paper_trading_engine.remove_trade_by_signal_id(paper_trade.signal_id)
+            risk_state.open_risk = previous_open_risk
+            logger.error(f"Could not persist paper entry for {und}; reverted in-memory trade: {exc}")
+            return False
+
+        paper_trading_engine.rebind_signal_id(original_signal_id, persisted_signal_id)
+        candidate.signal.signal_id = persisted_signal_id
+        candidate.levels.signal_id = persisted_signal_id
+        try:
+            await repository.update_risk_state(risk_state)
+        except Exception as exc:
+            logger.error(f"Paper trade persisted for {und}, but risk-state update failed: {exc}")
+
+        entry_price = paper_trade.entry_price
+        logger.info(
+            f"🎯 [AUTO-ENTRY] Opened qualified ENTRY for {und}: "
+            f"{candidate.signal.side} @ score {candidate.signal.score}/100 [Key: {candidate.signal.setup_key}]"
+        )
 
         outcome_tracker.register_signal(
             signal_id=candidate.signal.signal_id,
@@ -295,24 +326,39 @@ async def try_fire_entry(candidate: SignalCandidate, risk_state: RiskState) -> b
             if msg_id:
                 await repository.record_telegram_message_id(candidate.signal.signal_id, msg_id)
 
-        if paper_trade:
-            await repository.create_paper_trade(paper_trade)
-            await repository.update_risk_state(risk_state)
-            if ws_manager and candidate.contract and candidate.contract.instrument_id:
-                ws_manager.subscribe([candidate.contract.instrument_id])
-                if market_provider:
-                    await market_provider.subscribe_quotes([candidate.contract.instrument_id])
-            logger.info(
-                f"⚡ [AUTO-TRADE] Executed paper trade for {candidate.contract.symbol} @ ₹{paper_trade.entry_price}"
-            )
-            return True
+        if ws_manager and candidate.contract and candidate.contract.instrument_id:
+            ws_manager.subscribe([candidate.contract.instrument_id])
+            if market_provider:
+                await market_provider.subscribe_quotes([candidate.contract.instrument_id])
+        logger.info(
+            f"⚡ [AUTO-TRADE] Executed paper trade for {candidate.contract.symbol} @ ₹{paper_trade.entry_price}"
+        )
+        return True
 
-        return False
+
+async def notify_radar_signal(candidate: SignalCandidate) -> None:
+    """Send a radar alert; early/developing alerts never paper-enter."""
+    if not settings.TELEGRAM_ENABLED:
+        return
+    status_note = (
+        "EARLY WATCH — RADAR ONLY; WAIT FOR 5-MINUTE ENTRY CONFIRMATION"
+        if candidate.signal.status in ("EARLY_WATCH", "WATCH")
+        else "SETUP DEVELOPING — WAIT FOR ENTRY CONFIRMATION"
+    )
+    message_id = await telegram_notifier.send_signal_alert(
+        signal=candidate.signal,
+        levels=candidate.levels,
+        live_price=candidate.contract.ltp,
+        highest_gain_pct=0.0,
+        first_hour_gain_pct=None,
+        momentum_status=status_note,
+    )
+    if message_id and repository:
+        await repository.record_telegram_message_id(candidate.signal.signal_id, message_id)
 
 
 async def auto_strategy_scanner_loop() -> None:
-    """Continuous autonomous scanner that evaluates setups every 30 seconds across all indices.
-    Fires genuine ENTRY and WATCH signals completely automatically without manual intervention.
+    """Continuously scan enabled indices for radar alerts and qualified paper entries.
     """
     logger.info(f"Autonomous multi-index strategy scanner started ({settings.SCANNER_INTERVAL_SECONDS}s interval).")
     # Initial brief warmup for feeds to populate
@@ -356,6 +402,10 @@ async def auto_strategy_scanner_loop() -> None:
                         inst_id = f"IDX_{und}"
                         agg = candle_manager.get_or_create(inst_id, und)
                         candles_1m = list(agg.completed_1m)
+                        if agg._current_1m is not None:
+                            # The forming minute is used only for EARLY_WATCH radar;
+                            # it can never qualify an entry by itself.
+                            candles_1m.append(agg._current_1m.model_copy(deep=True))
                         candles_5m = list(agg.completed_5m)
                         if len(candles_5m) < 4:
                             candles_5m = await market_provider.get_historical_candles(inst_id, "5m", count=20)
@@ -367,6 +417,28 @@ async def auto_strategy_scanner_loop() -> None:
                         chain = await market_provider.get_option_chain_snapshot(und)
                         if not chain:
                             continue
+                        if chain.is_simulated or str(chain.source).endswith("_sim"):
+                            logger.warning(f"Suppressing {und} signal scan: option-chain source is simulated ({chain.source}).")
+                            continue
+
+                        latest_quote = agg.last_quote
+                        if not latest_quote or latest_quote.source.endswith("_sim"):
+                            continue
+                        received_at = latest_quote.receive_timestamp
+                        exchange_at = latest_quote.exchange_timestamp
+                        if received_at.tzinfo is None:
+                            received_at = received_at.replace(tzinfo=timezone.utc)
+                        if exchange_at.tzinfo is None:
+                            exchange_at = exchange_at.replace(tzinfo=timezone.utc)
+                        quote_age = max(
+                            (datetime.now(timezone.utc) - received_at.astimezone(timezone.utc)).total_seconds(),
+                            (datetime.now(timezone.utc) - exchange_at.astimezone(timezone.utc)).total_seconds(),
+                        )
+                        if quote_age < 0 or quote_age > settings.MAX_QUOTE_STALENESS_SECONDS:
+                            continue
+                        # Use the newest validated underlying tick alongside the REST
+                        # chain so the radar is not anchored to an older spot snapshot.
+                        chain.underlying_ltp = latest_quote.ltp
 
                         # --- STAGE INTEGRITY & INVALIDATION / EXPIRATION AUDIT ---
                         if existing_radar:
@@ -443,14 +515,23 @@ async def auto_strategy_scanner_loop() -> None:
                             candles_daily=candles_daily,
                             option_chain=chain,
                             risk_state=risk_state,
-                            is_quote_fresh=True,
+                            is_quote_fresh=(
+                                quote_age <= settings.MAX_QUOTE_STALENESS_SECONDS
+                                and not quote_validator.is_instrument_stale(latest_quote.instrument_id)
+                            ),
                             open_underlyings=open_underlyings,
                             candles_1m=candles_1m,
-                            quote_staleness_sec=0.0,
+                            quote_staleness_sec=quote_age,
                         )
 
                         if not candidate:
                             continue
+
+                        if candidate.signal.status in ("EARLY_WATCH", "SETUP_DEVELOPING", "WATCH"):
+                            contract_id = candidate.contract.instrument_id
+                            if contract_id and contract_id not in getattr(market_provider, "_subscribed_ids", set()):
+                                ws_manager.subscribe([contract_id])
+                                await market_provider.subscribe_quotes([contract_id])
 
                         # Three-Stage Transition & Promotion / Downgrade Logic
                         if candidate.signal.status == "ENTRY":
@@ -463,16 +544,9 @@ async def auto_strategy_scanner_loop() -> None:
                                     candidate.signal.reasons.insert(
                                         0, f"⚡ PROMOTED FROM {existing_radar.status}: Breakout qualified and verified!"
                                     )
-                                    await repository.update_signal_status(
-                                        signal_id=existing_radar.signal_id,
-                                        new_status="ENTRY",
-                                        price=candidate.levels.entry_range_high,
-                                        score=candidate.signal.score,
-                                        reasons=candidate.signal.reasons,
-                                        score_breakdown=candidate.signal.score_breakdown,
-                                        details={"promoted_from": existing_radar.status},
-                                    )
                                     candidate.signal.signal_id = existing_radar.signal_id
+                                else:
+                                    continue
 
                             await try_fire_entry(candidate, risk_state)
 
@@ -496,6 +570,7 @@ async def auto_strategy_scanner_loop() -> None:
                                 continue
                             else:
                                 await repository.create_signal(candidate.signal, candidate.levels)
+                                await notify_radar_signal(candidate)
                                 logger.info(
                                     f"⏳ [DEVELOPING] Setup developing for {und}: "
                                     f"{candidate.signal.side} @ score {candidate.signal.score}/100"
@@ -518,6 +593,7 @@ async def auto_strategy_scanner_loop() -> None:
                                 continue
                             else:
                                 await repository.create_signal(candidate.signal, candidate.levels)
+                                await notify_radar_signal(candidate)
                                 logger.info(
                                     f"👁️ [EARLY WATCH] Setup on early radar for {und}: "
                                     f"{candidate.signal.side} @ score {candidate.signal.score}/100"

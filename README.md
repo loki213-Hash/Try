@@ -13,12 +13,14 @@ The engine runs independent, parallel strategy workers for each index:
 
 | Index | Exchange | Underlying Symbol | Standard Lot Size | Strike Step | Default Expiry Day |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **NIFTY 50** | NSE | `NIFTY` | 75 | 50.0 | Thursday |
-| **BANK NIFTY** | NSE | `BANKNIFTY` | 30 | 100.0 | Wednesday |
-| **FINNIFTY** | NSE | `FINNIFTY` | 65 | 50.0 | Tuesday |
-| **MIDCPNIFTY** | NSE | `MIDCPNIFTY` | 75 | 25.0 | Monday |
-| **BSE SENSEX** | BSE | `SENSEX` | 20 | 100.0 | Friday |
-| **BSE BANKEX** | BSE | `BANKEX` | 15 | 100.0 | Monday |
+| **NIFTY 50** | NSE | `NIFTY` | 65 | 50.0 | Tuesday |
+| **BANK NIFTY** | NSE | `BANKNIFTY` | 30 | 100.0 | Tuesday |
+| **FINNIFTY** | NSE | `FINNIFTY` | 60 | 50.0 | Tuesday |
+| **MIDCPNIFTY** | NSE | `MIDCPNIFTY` | 120 | 25.0 | Tuesday |
+| **BSE SENSEX** | BSE | `SENSEX` | 20 | 100.0 | Tuesday |
+| **BSE BANKEX** | BSE | `BANKEX` | 15 | 100.0 | Tuesday (monthly) |
+
+Only NIFTY and SENSEX are enabled by default. Broker instrument and expiry data is authoritative; weekday values are fallbacks and do not account for exchange holidays.
 
 ---
 
@@ -30,8 +32,8 @@ The engine runs independent, parallel strategy workers for each index:
   - **NSE & BSE Coverage**: Indexes and index option derivatives for all 6 target indices.
   - **Instrument Master**: Daily CSV scrip master downloaded from `https://images.dhan.co/api-data/api-scrip-master.csv`.
   - **Live WebSocket Feed**: Binary protocol with Request Codes 15 (Ticker), 17 (Quote), and 21 (Depth).
-  - **Option Chain REST API**: Endpoint `/v2/option-chain` provides strikes, CE/PE quotes, volume, open interest (OI), implied volatility (IV), and Greeks (Delta, Theta, Gamma, Vega).
-  - **Rate Limits**: 5 REST requests per second; WebSocket up to 5 concurrent connections.
+  - **Option Chain REST API**: `/v2/optionchain` with the underlying's exchange security ID and segment provides strikes, CE/PE quotes, volume, OI, IV, and Greeks.
+  - **Live Feed**: Persistent WebSocket full packets provide realtime prices and depth; chain/OI snapshots are cached within provider limits.
   - **Fallback / Simulation**: High-fidelity simulator built-in when credentials are not supplied.
 
 ### Upstox (Secondary Adapter)
@@ -40,7 +42,7 @@ The engine runs independent, parallel strategy workers for each index:
   - **V3 Feed**: Protobuf binary streaming market feed.
   - **Market Quotes**: Bid/Ask depth, LTP, volume, and OI via `/v2/market-quote/quotes`.
   - **Option Chain**: Expiry and strike ladder via `/v2/option/chain`.
-  - **Rate Limits**: 25 requests per second for REST.
+  - **Live Feed**: Persistent V3 WebSocket with focused index and ATM option subscriptions; REST is used for chain snapshots and bootstrap data.
 
 ### Marketaux (News Context & Macro Calendar)
 - **Published Free Tier**: 100 requests per day, up to 3 articles per request.
@@ -67,7 +69,7 @@ C:\Users\lokes\Desktop\Trading\
 │   │   ├── dhan_provider.py   # Official DhanHQ V2 adapter
 │   │   ├── upstox_provider.py # Upstox V3 adapter
 │   │   ├── instrument_master.py # Dynamic strike resolution & lot catalog
-│   │   ├── quote_validator.py # Staleness (<5s), bid/ask, and spread verification
+│   │   ├── quote_validator.py # Staleness, bid/ask, and spread verification
 │   │   ├── candle_builder.py  # 1m tick aggregation into 5m and 15m completed bars
 │   │   └── websocket_manager.py # Reconnects, backoff, and heartbeat manager
 │   ├── analysis/
@@ -123,16 +125,19 @@ Signals are evaluated against a transparent 100-point evidence score:
 7. **Volatility & RR Suitability**: Max **10** pts (Expected RR ≥ 1:1.5)
 
 **Total**: **100** points.
-- **Score ≥ 80.0**: Eligible for **ENTRY** if all gates pass.
-- **Score 65.0 – 79.9**: Set to **WATCH**.
-- **Score < 65.0**: **REJECTED** (Explicit NO TRADE).
+- **EARLY WATCH**: Score ≥ 48 plus a qualifying pre-breakout setup; radar only.
+- **SETUP DEVELOPING**: Score ≥ 60, RVOL ≥ configured minimum, and no false-move veto.
+- **ENTRY**: Score ≥ 80, confirmed trigger, and all hard gates pass.
+- Below the applicable stage threshold, no signal is emitted. Thresholds are configurable in `config.py` or environment variables.
 
 ### Non-Negotiable Hard Gates (Independent of Score)
-- **Data Freshness Gate**: Stale quote (>5s delay) blocks entry.
+- **Data Freshness Gate**: Quote or option-chain data older than 3s blocks entry.
 - **Spread Gate**: Wide bid/ask spread blocks entry.
 - **Event Risk Gate**: High-impact macro events within ±15 minutes block entry.
 - **Daily Capital Stop**: Realized loss ≥ 1.0% or 2 consecutive planned stop-losses locks trading for the day.
 - **Defensible Targets Gate**: Inability to calculate 3 defensible targets suppresses the signal.
+
+Signal stages are explicit: **EARLY WATCH** is one-minute radar only; **SETUP DEVELOPING** requires at least the developing score, volume participation, and no false-move veto; **ENTRY** requires a confirmed trigger, at least 80 points, fresh live data, and every hard gate. Only an ENTRY that also passes paper position sizing, max-entry-price, exposure, cooldown, and daily-risk checks opens a paper trade. If paper execution rejects it, the ENTRY is not saved or reported as fired. Simulated or fallback market data is rejected by default.
 
 ---
 

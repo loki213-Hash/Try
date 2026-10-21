@@ -17,8 +17,8 @@ from app.monitoring.logging import logger
 from config import settings, IndexConfig
 
 
-# Official weekly expiry weekday mapping (0=Monday, 1=Tuesday, 2=Wednesday, 3=Thursday, 4=Friday)
-# SENSEX: Friday, NIFTY: Thursday, BANKNIFTY: Wednesday, FINNIFTY: Tuesday, MIDCPNIFTY: Monday, BANKEX: Monday
+# Fallback expiry weekdays (0=Monday, 1=Tuesday, ...). Broker contract masters
+# remain authoritative because expiries can move for holidays or exchange notices.
 EXPIRY_WEEKDAYS: Dict[str, int] = {
     "MIDCPNIFTY": 0,  # Monday
     "BANKEX": 0,      # Monday
@@ -34,13 +34,8 @@ EXPIRY_WEEKDAYS: Dict[str, int] = {
 def get_exchange_weekly_expiry(underlying: str, ref_dt: Optional[datetime] = None) -> datetime:
     """Calculates official exchange-standard weekly expiry datetime for Indian indices.
 
-    Adheres strictly to SEBI / NSE / BSE weekly derivative expiry framework:
-    - SENSEX (BSE): Friday
-    - NIFTY (NSE): Thursday
-    - BANKNIFTY (NSE): Wednesday
-    - FINNIFTY (NSE): Tuesday
-    - MIDCPNIFTY (NSE): Monday
-    - BANKEX (BSE): Monday
+    Provides a fallback weekday only. Prefer actual expiry dates from the
+    broker's active instrument master/API whenever available.
 
     Rules:
     - If ref_dt is on the expiry day:
@@ -147,11 +142,13 @@ class InstrumentMaster:
         return settings.INDICES.get(underlying.upper())
 
     async def load_or_refresh(self, force_download: bool = False) -> int:
-        """Loads master from cache or downloads fresh copy from broker."""
+        """Loads the daily broker master, refreshing cached contracts when stale."""
         cache_file = os.path.join(self.cache_dir, "scrip_master.csv")
-        downloaded = False
+        needs_download = force_download or not os.path.exists(cache_file)
+        if not needs_download:
+            needs_download = (datetime.now().timestamp() - os.path.getmtime(cache_file)) >= 86400
 
-        if force_download or not os.path.exists(cache_file):
+        if needs_download:
             try:
                 logger.info(f"Downloading scrip master from {self.DHAN_SCRIP_MASTER_URL}...")
                 async with aiohttp.ClientSession() as session:
@@ -161,7 +158,6 @@ class InstrumentMaster:
                             with open(cache_file, "wb") as f:
                                 f.write(content)
                             logger.info("Scrip master downloaded and cached successfully.")
-                            downloaded = True
                         else:
                             logger.warning(
                                 f"Failed to download scrip master (HTTP {resp.status}). Using fallback."
@@ -171,7 +167,10 @@ class InstrumentMaster:
 
         # Parse from file if exists, else build verified bootstrap catalog
         count = 0
-        if os.path.exists(cache_file) and not downloaded:
+        if os.path.exists(cache_file):
+            self._contracts.clear()
+            self._by_id.clear()
+            self._indices.clear()
             count = self._parse_scrip_master_csv(cache_file)
 
         if count == 0:
@@ -242,6 +241,12 @@ class InstrumentMaster:
                         is_active=True,
                     )
                     self._register_instrument(inst)
+                    if (
+                        not opt_type
+                        and (strike is None or strike == 0)
+                        and "INDEX" in row.get("SEM_INSTRUMENT_NAME", "").upper()
+                    ):
+                        self._indices[matched_underlying] = inst
                     count += 1
         except Exception as e:
             logger.error(f"Error parsing scrip master CSV: {e}")
@@ -319,6 +324,9 @@ class InstrumentMaster:
 
     def get_instrument_by_id(self, key: str) -> Optional[Instrument]:
         return self._by_id.get(key)
+
+    def get_index_instrument(self, underlying: str) -> Optional[Instrument]:
+        return self._indices.get(underlying.upper())
 
     def resolve_atm_strike(self, underlying: str, spot_price: float) -> float:
         """Rounds spot price to the nearest valid exchange strike interval."""

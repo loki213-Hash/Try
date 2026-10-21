@@ -7,6 +7,7 @@ queries for signals, paper trades, risk state, and metrics.
 from __future__ import annotations
 import os
 from datetime import datetime, date, timezone, timedelta
+from zoneinfo import ZoneInfo
 from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import select, update, delete, desc, and_, func
@@ -200,25 +201,71 @@ class Repository:
             count = result.scalar() or 0
             return count > 0
 
-    async def create_signal(self, signal: Signal, levels: SignalLevels) -> str:
+    async def create_signal(
+        self,
+        signal: Signal,
+        levels: SignalLevels,
+        paper_trade: Optional[PaperTrade] = None,
+    ) -> str:
+        """Create/update a signal and optionally persist its paper trade atomically."""
         async with self.session_factory() as session:
+            existing_sig = None
             if signal.setup_key:
                 existing = await session.execute(
                     select(Signal).where(Signal.setup_key == signal.setup_key)
                 )
                 existing_sig = existing.scalar_one_or_none()
-                if existing_sig:
-                    # Upgrade/update record with latest qualified stage data
-                    existing_sig.status = signal.status
-                    existing_sig.score = signal.score
-                    existing_sig.reasons = signal.reasons
-                    existing_sig.score_breakdown = signal.score_breakdown
-                    await session.commit()
-                    return existing_sig.signal_id
+            if existing_sig is None:
+                existing = await session.execute(
+                    select(Signal).where(Signal.signal_id == signal.signal_id)
+                )
+                existing_sig = existing.scalar_one_or_none()
+
+            if existing_sig:
+                # Promote the original radar record, even when the confirmed
+                # entry has a newer setup key. Preserve its original created_at.
+                existing_sig.setup_key = signal.setup_key
+                existing_sig.underlying = signal.underlying
+                existing_sig.side = signal.side
+                existing_sig.score = signal.score
+                existing_sig.strategy_version = signal.strategy_version
+                existing_sig.status = signal.status
+                existing_sig.reasons = signal.reasons
+                existing_sig.score_breakdown = signal.score_breakdown
+                existing_sig.snapshot_id = signal.snapshot_id
+                existing_sig.expires_at = signal.expires_at
+
+                level_result = await session.execute(
+                    select(SignalLevels).where(SignalLevels.signal_id == existing_sig.signal_id)
+                )
+                existing_levels = level_result.scalar_one_or_none()
+                if existing_levels:
+                    for column in SignalLevels.__table__.columns:
+                        if column.name not in ("id", "signal_id"):
+                            setattr(existing_levels, column.name, getattr(levels, column.name))
+                else:
+                    levels.signal_id = existing_sig.signal_id
+                    session.add(levels)
+
+                if paper_trade:
+                    paper_trade.signal_id = existing_sig.signal_id
+                    session.add(paper_trade)
+
+                session.add(SignalEvent(
+                    signal_id=existing_sig.signal_id,
+                    event_type=signal.status,
+                    price=levels.entry_range_high,
+                    details={"score": signal.score, "reasons": signal.reasons},
+                ))
+                await session.commit()
+                return existing_sig.signal_id
 
             session.add(signal)
             levels.signal_id = signal.signal_id
             session.add(levels)
+            if paper_trade:
+                paper_trade.signal_id = signal.signal_id
+                session.add(paper_trade)
             ev = SignalEvent(
                 signal_id=signal.signal_id,
                 event_type="GENERATED",
@@ -237,14 +284,23 @@ class Repository:
             return result.scalar_one_or_none()
 
     async def get_active_signals(self, max_age_minutes: Optional[int] = None) -> List[Signal]:
+        """Return current, unexpired signals; older records remain available as history."""
         async with self.session_factory() as session:
+            now = datetime.now(timezone.utc)
+            today_ist_start = (
+                now.astimezone(ZoneInfo("Asia/Kolkata"))
+                .replace(hour=0, minute=0, second=0, microsecond=0)
+                .astimezone(timezone.utc)
+            )
             query = select(Signal).where(
                 Signal.status.in_([
                     "EARLY_WATCH", "SETUP_DEVELOPING", "ENTRY", "WATCH", "TP1_HIT", "TP2_HIT"
-                ])
+                ]),
+                Signal.created_at >= today_ist_start,
+                Signal.expires_at > now,
             )
             if max_age_minutes is not None:
-                cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+                cutoff = now - timedelta(minutes=max_age_minutes)
                 query = query.where(Signal.created_at >= cutoff)
             query = query.order_by(desc(Signal.created_at))
             result = await session.execute(query)

@@ -415,21 +415,88 @@ class PriceActionAnalyzer:
             )
 
         # 3. Proximity to Range Boundary / Early Developing Watch (Inside ORB)
-        if orb.range_high > 0 and (orb.range_high - current.close) / orb.range_high < 0.0020 and current.close > current.open:
+        body_ratio = abs(current.close - current.open) / max(current.high - current.low, 0.01)
+        bullish_proximity_pct = max(0.0, (orb.range_high - current.close) / orb.range_high * 100.0) if orb.range_high > 0 else 100.0
+        bearish_proximity_pct = max(0.0, (current.close - orb.range_low) / orb.range_low * 100.0) if orb.range_low > 0 else 100.0
+        if (
+            orb.range_high > 0
+            and bullish_proximity_pct <= settings.EARLY_WATCH_5M_PROXIMITY_PCT
+            and current.close > current.open
+            and body_ratio >= settings.EARLY_WATCH_5M_MIN_BODY_RATIO
+        ):
             return SetupResult(
                 SetupType.EARLY_BULLISH_MOMENTUM,
-                [f"Early momentum: Price ({current.close}) pressing against ORB High ({orb.range_high}) boundary"],
+                [f"Early momentum: bullish 5m body ({body_ratio:.2f}) is {bullish_proximity_pct:.2f}% from ORB High ({orb.range_high})"],
                 orb.range_high
             )
-        if orb.range_low > 0 and (current.close - orb.range_low) / orb.range_low < 0.0020 and current.close < current.open:
+        if (
+            orb.range_low > 0
+            and bearish_proximity_pct <= settings.EARLY_WATCH_5M_PROXIMITY_PCT
+            and current.close < current.open
+            and body_ratio >= settings.EARLY_WATCH_5M_MIN_BODY_RATIO
+        ):
             return SetupResult(
                 SetupType.EARLY_BEARISH_MOMENTUM,
-                [f"Early momentum: Price ({current.close}) pressing against ORB Low ({orb.range_low}) boundary"],
+                [f"Early momentum: bearish 5m body ({body_ratio:.2f}) is {bearish_proximity_pct:.2f}% from ORB Low ({orb.range_low})"],
                 orb.range_low
             )
 
         # 4. Inside Range / Consolidation
         return SetupResult(SetupType.NONE, ["Price consolidating within opening range"], None)
+
+    @classmethod
+    def detect_early_watch_setup(
+        cls,
+        candles_1m: List[UnifiedCandle],
+        orb: OpeningRange,
+        swing_high: Optional[float] = None,
+        swing_low: Optional[float] = None,
+    ) -> SetupResult:
+        """Detect a developing approach/breach from the current one-minute bar.
+
+        This is radar-only evidence. The detector must never promote this
+        one-minute observation directly to an entry.
+        """
+        if not orb.is_formed or not candles_1m:
+            return SetupResult(SetupType.NONE, ["Waiting for a completed opening range and live one-minute data"], None)
+
+        candle = candles_1m[-1]
+        price = candle.close
+        if price <= 0 or candle.high <= candle.low:
+            return SetupResult(SetupType.NONE, ["Invalid live one-minute bar"], None)
+
+        proximity = settings.EARLY_WATCH_1M_PROXIMITY_PCT / 100.0
+        body_ratio = abs(candle.close - candle.open) / max(candle.high - candle.low, 0.01)
+
+        b_high = swing_high if (swing_high and swing_high > orb.range_high) else orb.range_high
+        b_low = swing_low if (swing_low and swing_low < orb.range_low) else orb.range_low
+
+        bullish_distance = (b_high - price) / price
+        bearish_distance = (price - b_low) / price
+
+        if (
+            bullish_distance <= proximity
+            and bullish_distance >= -proximity
+            and candle.close > candle.open
+            and body_ratio >= settings.EARLY_WATCH_1M_MIN_BODY_RATIO
+        ):
+            return SetupResult(
+                SetupType.EARLY_BULLISH_MOMENTUM,
+                [f"Live 1m radar: bullish candle is {abs(bullish_distance) * 100:.2f}% from boundary ({b_high:.1f}); entry awaits 5m confirmation"],
+                b_high,
+            )
+        if (
+            bearish_distance <= proximity
+            and bearish_distance >= -proximity
+            and candle.close < candle.open
+            and body_ratio >= settings.EARLY_WATCH_1M_MIN_BODY_RATIO
+        ):
+            return SetupResult(
+                SetupType.EARLY_BEARISH_MOMENTUM,
+                [f"Live 1m radar: bearish candle is {abs(bearish_distance) * 100:.2f}% from boundary ({b_low:.1f}); entry awaits 5m confirmation"],
+                b_low,
+            )
+        return SetupResult(SetupType.NONE, ["No one-minute approach to range or swing boundary"], None)
 
     @classmethod
     def evaluate_entry_trigger(

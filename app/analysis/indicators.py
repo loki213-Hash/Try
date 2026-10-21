@@ -97,13 +97,15 @@ class TechnicalIndicators:
     @staticmethod
     def calculate_rvol(df: pd.DataFrame, window: int = 20) -> float:
         """Calculates Relative Volume (RVOL) of current candle vs rolling average."""
-        if df.empty or len(df) < 2:
-            return 1.0
+        if df.empty or len(df) < 2 or "volume" not in df.columns:
+            return 0.0
         recent_vol = df["volume"].iloc[-1]
+        if recent_vol <= 0:
+            return 0.0
         prior = df["volume"].iloc[:-1]
         if prior.empty:
-            return 1.0
+            return 0.0
         baseline_vol = prior.tail(window).mean()
         if baseline_vol <= 0 or np.isnan(baseline_vol):
-            return 1.0
+            return 0.0
         return round(float(recent_vol / baseline_vol), 2)

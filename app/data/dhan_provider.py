@@ -11,6 +11,7 @@ import struct
 import json
 import time
 import random
+from urllib.parse import urlencode
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 import httpx
@@ -48,7 +49,13 @@ class DhanProvider(BaseMarketDataProvider):
         self.wss_url = wss_url or settings.DHAN_WSS_URL
 
         self._ws_client: Optional[websockets.WebSocketClientProtocol] = None
+        self._ws_reader_task: Optional[asyncio.Task] = None
+        self._client: Optional[httpx.AsyncClient] = None
         self._subscribed_ids: set[str] = set()
+        self._security_metadata: Dict[str, tuple[str, str, str]] = {}
+        self._last_quotes: Dict[str, UnifiedQuote] = {}
+        self._chain_cache: Dict[str, tuple[OptionChainSnapshot, float]] = {}
+        self._expiry_cache: Dict[str, tuple[str, float]] = {}
         self._running = False
         self._rate_limiter_lock = asyncio.Lock()
         self._last_req_time = 0.0
@@ -82,6 +89,14 @@ class DhanProvider(BaseMarketDataProvider):
             "Accept": "application/json",
         }
 
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(8.0, connect=3.0),
+                limits=httpx.Limits(max_keepalive_connections=8, max_connections=16),
+            )
+        return self._client
+
     async def connect(self) -> bool:
         if self._is_simulated:
             logger.info("DhanProvider operating in high-fidelity simulated test mode (no live keys supplied).")
@@ -94,19 +109,24 @@ class DhanProvider(BaseMarketDataProvider):
         try:
             # Validate credentials by querying API
             await self._throttle_request()
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(
-                    f"{self.base_url}/marketfeed/quote",
-                    headers=self._get_headers(),
-                )
-                if resp.status_code in (200, 400):  # 400 may occur if no query params passed
-                    self.is_connected = True
-                    logger.info("Connected to DhanHQ REST API successfully.")
-                    return True
-                else:
-                    logger.warning(f"Dhan REST check failed: {resp.status_code} {resp.text}")
-                    self.is_connected = False
-                    return False
+            client = await self._get_client()
+            resp = await client.get(f"{self.base_url}/marketfeed/quote", headers=self._get_headers())
+            if resp.status_code in (200, 400):  # 400 may occur if no query params passed
+                ws_params = urlencode({
+                    "version": "2",
+                    "token": self.access_token,
+                    "clientId": self.client_id,
+                    "authType": "2",
+                })
+                ws_url = f"{self.wss_url}?{ws_params}"
+                self._ws_client = await websockets.connect(ws_url, ping_interval=20, ping_timeout=40)
+                self.is_connected = True
+                self._ws_reader_task = asyncio.create_task(self._read_market_feed())
+                logger.info("Connected to DhanHQ REST API and live market feed.")
+                return True
+            logger.warning(f"Dhan REST check failed: {resp.status_code} {resp.text}")
+            self.is_connected = False
+            return False
         except Exception as e:
             logger.error(f"Failed to connect to DhanHQ: {e}")
             self.is_connected = False
@@ -125,11 +145,164 @@ class DhanProvider(BaseMarketDataProvider):
 
         if self._ws_client:
             try:
+                await self._ws_client.send(json.dumps({"RequestCode": 12}))
                 await self._ws_client.close()
             except Exception:
                 pass
             self._ws_client = None
+        if self._ws_reader_task:
+            self._ws_reader_task.cancel()
+            try:
+                await self._ws_reader_task
+            except asyncio.CancelledError:
+                pass
+            self._ws_reader_task = None
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+        self._client = None
+        self._subscribed_ids.clear()
         logger.info("DhanProvider disconnected.")
+
+    def _resolve_subscription(self, instrument_id: str) -> Optional[tuple[str, str, str]]:
+        """Resolve an internal/provider identifier to (segment, security ID, symbol)."""
+        key = str(instrument_id)
+        if key.startswith("IDX_"):
+            underlying = key[4:].upper()
+            inst = instrument_master.get_index_instrument(underlying)
+            if not inst or not inst.instrument_id or inst.instrument_id.startswith("IDX_"):
+                return None
+            segment = "IDX_B" if inst.exchange.upper().startswith("BSE") else "IDX_I"
+            return segment, str(inst.instrument_id), underlying
+
+        meta = self._security_metadata.get(key)
+        if meta:
+            return meta[2], key, meta[1]
+        inst = instrument_master.get_instrument_by_id(key)
+        if not inst:
+            return None
+        segment = "IDX_B" if inst.option_type == "INDEX" and inst.exchange.upper().startswith("BSE") else (
+            "IDX_I" if inst.option_type == "INDEX" else
+            "BSE_FNO" if inst.exchange.upper().startswith("BSE") else "NSE_FNO"
+        )
+        return segment, str(inst.instrument_id), inst.symbol
+
+    async def _read_market_feed(self) -> None:
+        """Decode Dhan's little-endian quote/full packets and publish live ticks."""
+        while self._running and self._ws_client:
+            try:
+                packet = await self._ws_client.recv()
+                if isinstance(packet, bytes):
+                    await self._process_market_packet(packet)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                if self._running:
+                    logger.error(f"Dhan market feed reader stopped: {exc}")
+                self.is_connected = False
+                if self._ws_client:
+                    try:
+                        await self._ws_client.close()
+                    except Exception:
+                        pass
+                    self._ws_client = None
+                self._subscribed_ids.clear()
+                break
+
+    async def _process_market_packet(self, packet: bytes) -> None:
+        if len(packet) < 17:
+            return
+        try:
+            packet_type = packet[0]
+            security_id = str(struct.unpack_from("<I", packet, 4)[0])
+            meta = self._security_metadata.get(security_id)
+            if not meta:
+                # Index keys can be registered before option-chain parsing.
+                for und in settings.INDICES:
+                    inst = instrument_master.get_index_instrument(und)
+                    if inst and str(inst.instrument_id) == security_id:
+                        segment = "IDX_B" if inst.exchange.upper().startswith("BSE") else "IDX_I"
+                        meta = (f"IDX_{und}", und, segment)
+                        self._security_metadata[security_id] = meta
+                        break
+            if not meta:
+                return
+
+            internal_id, symbol, segment = meta
+            previous = self._last_quotes.get(internal_id)
+            now = datetime.now(timezone.utc)
+            if packet_type == 8 and len(packet) >= 163:
+                ltp = float(struct.unpack_from("<f", packet, 9)[0])
+                ltt = int(struct.unpack_from("<i", packet, 15)[0])
+                volume = int(struct.unpack_from("<i", packet, 23)[0])
+                oi = int(struct.unpack_from("<i", packet, 35)[0])
+                day_open = float(struct.unpack_from("<f", packet, 47)[0])
+                day_high = float(struct.unpack_from("<f", packet, 55)[0])
+                day_low = float(struct.unpack_from("<f", packet, 59)[0])
+                bid_qty = int(struct.unpack_from("<i", packet, 63)[0])
+                ask_qty = int(struct.unpack_from("<i", packet, 67)[0])
+                bid = float(struct.unpack_from("<f", packet, 75)[0])
+                ask = float(struct.unpack_from("<f", packet, 79)[0])
+                depth = UnifiedDepth(
+                    bids=[UnifiedDepthLevel(price=float(struct.unpack_from("<f", packet, 75 + i * 20)[0]), quantity=int(struct.unpack_from("<i", packet, 63 + i * 20)[0])) for i in range(5)],
+                    asks=[UnifiedDepthLevel(price=float(struct.unpack_from("<f", packet, 79 + i * 20)[0]), quantity=int(struct.unpack_from("<i", packet, 67 + i * 20)[0])) for i in range(5)],
+                )
+            elif packet_type == 4 and len(packet) >= 51:
+                ltp = float(struct.unpack_from("<f", packet, 9)[0])
+                ltt = int(struct.unpack_from("<i", packet, 15)[0])
+                volume = int(struct.unpack_from("<i", packet, 23)[0])
+                oi = previous.oi if previous else 0
+                day_open = float(struct.unpack_from("<f", packet, 35)[0])
+                day_high = float(struct.unpack_from("<f", packet, 43)[0])
+                day_low = float(struct.unpack_from("<f", packet, 47)[0])
+                bid = previous.bid if previous else None
+                ask = previous.ask if previous else None
+                bid_qty = previous.bid_qty if previous else None
+                ask_qty = previous.ask_qty if previous else None
+                depth = previous.depth if previous else None
+            elif packet_type == 2 and len(packet) >= 17:
+                ltp = float(struct.unpack_from("<f", packet, 9)[0])
+                ltt = int(struct.unpack_from("<i", packet, 13)[0])
+                volume = previous.volume if previous else 0
+                oi = previous.oi if previous else 0
+                day_open = previous.open if previous else None
+                day_high = previous.high if previous else None
+                day_low = previous.low if previous else None
+                bid = previous.bid if previous else None
+                ask = previous.ask if previous else None
+                bid_qty = previous.bid_qty if previous else None
+                ask_qty = previous.ask_qty if previous else None
+                depth = previous.depth if previous else None
+            elif packet_type == 5 and len(packet) >= 13:
+                if previous:
+                    previous.oi = int(struct.unpack_from("<i", packet, 9)[0])
+                return
+            else:
+                return
+
+            quote = UnifiedQuote(
+                instrument_id=internal_id,
+                symbol=symbol,
+                exchange="BSE" if segment.startswith("BSE") or segment == "IDX_B" else "NSE",
+                ltp=ltp,
+                bid=bid,
+                ask=ask,
+                bid_qty=bid_qty,
+                ask_qty=ask_qty,
+                volume=volume,
+                oi=oi,
+                open=day_open,
+                high=day_high,
+                low=day_low,
+                exchange_timestamp=datetime.fromtimestamp(ltt, timezone.utc) if ltt > 0 else now,
+                receive_timestamp=now,
+                source="dhan_ws",
+                depth=depth,
+            )
+            self._last_quotes[internal_id] = quote
+            self._last_quotes[security_id] = quote
+            await self._emit_quote(quote)
+        except (struct.error, ValueError, OverflowError) as exc:
+            logger.warning(f"Rejected malformed Dhan feed packet: {exc}")
 
     async def _fetch_public_index_prices(self) -> Dict[str, float]:
         """Fetches real-time actual index prices from public financial endpoints."""
@@ -229,16 +402,50 @@ class DhanProvider(BaseMarketDataProvider):
                 await asyncio.sleep(1.0)
 
     async def subscribe_quotes(self, instrument_ids: List[str]) -> None:
-        for i_id in instrument_ids:
-            self._subscribed_ids.add(i_id)
-        if self._ws_client and self.is_connected and not self._is_simulated:
-            # Send subscription message in Dhan wire format
-            sub_payload = {
-                "RequestCode": 17,  # Full Quote Subscription
-                "InstrumentCount": len(instrument_ids),
-                "InstrumentList": [{"ExchangeSegment": "NSE_FNO", "SecurityId": str(x)} for x in instrument_ids]
-            }
-            await self._ws_client.send(json.dumps(sub_payload))
+        subscriptions = []
+        for internal_id in instrument_ids:
+            already_subscribed = internal_id in self._subscribed_ids
+            self._subscribed_ids.add(internal_id)
+            if already_subscribed:
+                continue
+            resolved = self._resolve_subscription(internal_id)
+            if not resolved:
+                logger.warning(f"Cannot subscribe to Dhan instrument without a live security ID: {internal_id}")
+                continue
+            segment, security_id, symbol = resolved
+            self._security_metadata[security_id] = (internal_id if internal_id.startswith("IDX_") else security_id, symbol, segment)
+            subscriptions.append({"ExchangeSegment": segment, "SecurityId": security_id})
+
+        if self._ws_client and self.is_connected and subscriptions:
+            # Dhan accepts at most 100 instruments per JSON subscription.
+            for start in range(0, len(subscriptions), 100):
+                batch = subscriptions[start:start + 100]
+                await self._ws_client.send(json.dumps({
+                    "RequestCode": 21,  # Full packet: quote, OI and five-level depth
+                    "InstrumentCount": len(batch),
+                    "InstrumentList": batch,
+                }))
+
+    def _overlay_live_quotes(self, snapshot: OptionChainSnapshot) -> OptionChainSnapshot:
+        now = datetime.now(timezone.utc)
+        spot = self._last_quotes.get(f"IDX_{snapshot.underlying}")
+        if spot and (now - spot.receive_timestamp).total_seconds() <= settings.MAX_QUOTE_STALENESS_SECONDS:
+            snapshot.underlying_ltp = spot.ltp
+        for options in snapshot.contracts.values():
+            for contract in options.values():
+                quote = self._last_quotes.get(contract.instrument_id)
+                if not quote or (now - quote.receive_timestamp).total_seconds() > settings.MAX_QUOTE_STALENESS_SECONDS:
+                    continue
+                contract.ltp = quote.ltp
+                if quote.bid and quote.bid > 0:
+                    contract.bid = quote.bid
+                if quote.ask and quote.ask > 0:
+                    contract.ask = quote.ask
+                contract.bid_qty = quote.bid_qty
+                contract.ask_qty = quote.ask_qty
+                contract.volume = quote.volume if quote.volume is not None else contract.volume
+                contract.oi = quote.oi if quote.oi is not None else contract.oi
+        return snapshot
 
     async def unsubscribe_quotes(self, instrument_ids: List[str]) -> None:
         for i_id in instrument_ids:
@@ -249,17 +456,27 @@ class DhanProvider(BaseMarketDataProvider):
         if self._is_simulated:
             return self._generate_simulated_quote(instrument_id)
 
+        cached = self._last_quotes.get(instrument_id)
+        if cached and (datetime.now(timezone.utc) - cached.receive_timestamp).total_seconds() <= settings.MAX_QUOTE_STALENESS_SECONDS:
+            return cached
+
         await self._throttle_request()
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                resp = await client.post(
-                    f"{self.base_url}/marketfeed/quote",
-                    headers=self._get_headers(),
-                    json={"instruments": [instrument_id]},
-                )
-                if resp.status_code == 200:
-                    data = resp.json().get("data", {}).get(instrument_id, {})
-                    return self._parse_dhan_rest_quote(instrument_id, data)
+            resolved = self._resolve_subscription(instrument_id)
+            if not resolved:
+                return None
+            segment, security_id, _ = resolved
+            client = await self._get_client()
+            resp = await client.post(
+                f"{self.base_url}/marketfeed/quote",
+                headers=self._get_headers(),
+                json={segment: [security_id]},
+            )
+            if resp.status_code == 200:
+                data = resp.json().get("data", {}).get(segment, {}).get(security_id, {})
+                quote = self._parse_dhan_rest_quote(instrument_id, data)
+                self._last_quotes[instrument_id] = quote
+                return quote
         except Exception as e:
             logger.error(f"Error fetching Dhan quote snapshot for {instrument_id}: {e}")
         return None
@@ -308,23 +525,20 @@ class DhanProvider(BaseMarketDataProvider):
             to_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             from_date = (datetime.now(timezone.utc) - timedelta(days=10)).strftime("%Y-%m-%d")
 
+            index_inst = instrument_master.get_index_instrument(instrument_id.replace("IDX_", "")) if instrument_id.startswith("IDX_") else None
             payload = {
-                "securityId": instrument_id,
-                "exchangeSegment": "NSE_FNO",
-                "instrument": "OPTIDX",
+                "securityId": str(index_inst.instrument_id) if index_inst else instrument_id,
+                "exchangeSegment": ("IDX_B" if index_inst.exchange.upper().startswith("BSE") else "IDX_I") if index_inst else "NSE_FNO",
+                "instrument": "INDEX" if index_inst else "OPTIDX",
                 "interval": iv,
                 "fromDate": from_date,
                 "toDate": to_date,
             }
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    f"{self.base_url}/charts/intraday",
-                    headers=self._get_headers(),
-                    json=payload,
-                )
-                if resp.status_code == 200:
-                    raw = resp.json().get("data", {})
-                    return self._parse_dhan_candles(instrument_id, timeframe, raw)
+            client = await self._get_client()
+            resp = await client.post(f"{self.base_url}/charts/intraday", headers=self._get_headers(), json=payload)
+            if resp.status_code == 200:
+                raw = resp.json().get("data", {})
+                return self._parse_dhan_candles(instrument_id, timeframe, raw)
         except Exception as e:
             logger.error(f"Error fetching Dhan candles: {e}")
         return []
@@ -360,28 +574,62 @@ class DhanProvider(BaseMarketDataProvider):
     async def get_option_chain_snapshot(
         self, underlying: str, expiry: Optional[datetime] = None
     ) -> Optional[OptionChainSnapshot]:
-        """Fetches full option chain with Greeks from Dhan /v2/option-chain."""
+        """Fetches and briefly caches Dhan's official optionchain snapshot."""
         now = datetime.now(timezone.utc)
-        resolved_expiry = expiry or instrument_master.get_exchange_weekly_expiry(underlying, now)
         if self._is_simulated:
-            return self._generate_simulated_option_chain(underlying, resolved_expiry)
+            return self._generate_simulated_option_chain(underlying, expiry or instrument_master.get_exchange_weekly_expiry(underlying, now))
+
+        index_inst = instrument_master.get_index_instrument(underlying)
+        if not index_inst or not str(index_inst.instrument_id).isdigit():
+            logger.error(f"No numeric Dhan underlying security ID loaded for {underlying}; refusing chain fallback.")
+            return None
+        segment = "IDX_B" if index_inst.exchange.upper().startswith("BSE") else "IDX_I"
+        resolved_expiry = expiry or await self._get_active_expiry(underlying, index_inst.instrument_id, segment)
+        cache_key = f"{underlying.upper()}:{resolved_expiry:%Y-%m-%d}"
+        cached = self._chain_cache.get(cache_key)
+        if cached and time.time() - cached[1] < 3.0:
+            return self._overlay_live_quotes(cached[0])
 
         await self._throttle_request()
         try:
-            params = {"Underlying": underlying, "Expiry": resolved_expiry.strftime("%Y-%m-%d")}
-
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    f"{self.base_url}/option-chain",
-                    headers=self._get_headers(),
-                    json=params,
-                )
-                if resp.status_code == 200:
-                    data = resp.json().get("data", {})
-                    return self._parse_dhan_option_chain(underlying, data)
+            client = await self._get_client()
+            resp = await client.post(
+                f"{self.base_url}/optionchain",
+                headers=self._get_headers(),
+                json={"UnderlyingScrip": int(index_inst.instrument_id), "UnderlyingSeg": segment, "Expiry": resolved_expiry.strftime("%Y-%m-%d")},
+            )
+            if resp.status_code == 200:
+                data = resp.json().get("data", {})
+                if data:
+                    snapshot = self._parse_dhan_option_chain(underlying, data)
+                    self._chain_cache[cache_key] = (snapshot, time.time())
+                    return self._overlay_live_quotes(snapshot)
+            logger.warning(f"Dhan option chain returned HTTP {resp.status_code} for {underlying}: {resp.text[:300]}")
         except Exception as e:
             logger.error(f"Error fetching Dhan option chain: {e}")
         return None
+
+    async def _get_active_expiry(self, underlying: str, security_id: str, segment: str) -> datetime:
+        cached = self._expiry_cache.get(underlying.upper())
+        today_ist = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).date()
+        if cached and time.time() - cached[1] < 600 and cached[0] >= today_ist.isoformat():
+            return datetime.strptime(cached[0], "%Y-%m-%d").replace(hour=10, tzinfo=timezone.utc)
+        try:
+            await self._throttle_request()
+            client = await self._get_client()
+            resp = await client.post(
+                f"{self.base_url}/optionchain/expirylist",
+                headers=self._get_headers(),
+                json={"UnderlyingScrip": int(security_id), "UnderlyingSeg": segment},
+            )
+            if resp.status_code == 200:
+                expiries = sorted(x for x in resp.json().get("data", []) if x >= today_ist.isoformat())
+                if expiries:
+                    self._expiry_cache[underlying.upper()] = (expiries[0], time.time())
+                    return datetime.strptime(expiries[0], "%Y-%m-%d").replace(hour=10, tzinfo=timezone.utc)
+        except Exception as exc:
+            logger.warning(f"Could not resolve active Dhan expiry for {underlying}: {exc}")
+        return instrument_master.get_exchange_weekly_expiry(underlying, datetime.now(timezone.utc))
 
     def _parse_dhan_option_chain(
         self, underlying: str, data: Dict[str, Any]
@@ -426,7 +674,7 @@ class DhanProvider(BaseMarketDataProvider):
 
                 g = item.get("greeks", {})
                 greeks = OptionGreeks(
-                    delta=float(g.get("delta", 0.5)),
+                    delta=float(g["delta"]) if g.get("delta") is not None else None,
                     theta=float(g.get("theta", 0.0)),
                     gamma=float(g.get("gamma", 0.0)),
                     vega=float(g.get("vega", 0.0)),
@@ -440,8 +688,8 @@ class DhanProvider(BaseMarketDataProvider):
                     option_type=type_upper,
                     expiry=chain_expiry,
                     ltp=float(item.get("last_price", 0.0)),
-                    bid=float(item.get("top_bid_price", item.get("last_price", 0.0) * 0.99)),
-                    ask=float(item.get("top_ask_price", item.get("last_price", 0.0) * 1.01)),
+                    bid=float(item["top_bid_price"]) if item.get("top_bid_price") else None,
+                    ask=float(item["top_ask_price"]) if item.get("top_ask_price") else None,
                     volume=int(item.get("volume", 0)),
                     oi=oi,
                     oi_change=int(item.get("oi_change", 0)),
@@ -450,6 +698,11 @@ class DhanProvider(BaseMarketDataProvider):
                     if instrument_master.get_index_config(underlying)
                     else 50,
                 )
+                security_id = str(item.get("security_id", ""))
+                cfg = instrument_master.get_index_config(underlying)
+                segment = "BSE_FNO" if cfg and cfg.exchange.upper().startswith("BSE") else "NSE_FNO"
+                if security_id:
+                    self._security_metadata[security_id] = (security_id, str(item.get("trading_symbol", "")), segment)
 
         pcr = round(total_pe_oi / max(total_ce_oi, 1), 3)
         return OptionChainSnapshot(
@@ -459,6 +712,8 @@ class DhanProvider(BaseMarketDataProvider):
             expiry=chain_expiry,
             contracts=contracts_dict,
             pcr_oi=pcr,
+            source="dhan_rest",
+            is_simulated=False,
         )
 
     # --- Simulated Generator Functions for Offline / Replay / Unit Tests ---
@@ -674,4 +929,6 @@ class DhanProvider(BaseMarketDataProvider):
             contracts=contracts_dict,
             pcr_oi=pcr,
             pcr_volume=round(pcr * 0.9, 3),
+            source="dhan_sim",
+            is_simulated=True,
         )

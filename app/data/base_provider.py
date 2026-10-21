@@ -106,6 +106,8 @@ class OptionChainSnapshot(BaseModel):
     underlying_ltp: float
     snapshot_timestamp: datetime
     expiry: datetime
+    source: str = "unknown"
+    is_simulated: bool = False
     contracts: Dict[float, Dict[str, OptionContractData]] = Field(
         default_factory=dict
     )  # strike -> {"CE": OptionContractData, "PE": OptionContractData}

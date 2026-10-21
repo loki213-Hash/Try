@@ -46,6 +46,33 @@ class MultiIndexDetector:
 
     def __init__(self):
         self.strategy_version = "v1.0.0"
+        self._option_volume_sessions: Dict[str, Tuple[object, int, Dict[datetime, int]]] = {}
+
+    def _calculate_option_rvol(self, instrument_id: str, cumulative_volume: int, timestamp: datetime) -> float:
+        """Compute current-minute option RVOL from cumulative broker volume."""
+        if not instrument_id or cumulative_volume <= 0:
+            return 0.0
+        ts = timestamp if timestamp.tzinfo else timestamp.replace(tzinfo=timezone.utc)
+        local_ts = ts.astimezone(timezone.utc) + timedelta(hours=5, minutes=30)
+        minute = local_ts.replace(second=0, microsecond=0, tzinfo=timezone.utc)
+        session_date = local_ts.date()
+        last_date, last_total, buckets = self._option_volume_sessions.get(
+            instrument_id, (session_date, cumulative_volume, {})
+        )
+        if session_date != last_date or cumulative_volume < last_total:
+            buckets = {}
+            delta = 0
+        else:
+            delta = max(cumulative_volume - last_total, 0)
+        buckets[minute] = buckets.get(minute, 0) + delta
+        cutoff = minute - timedelta(minutes=20)
+        buckets = {t: v for t, v in buckets.items() if t >= cutoff}
+        self._option_volume_sessions[instrument_id] = (session_date, cumulative_volume, buckets)
+
+        previous = [buckets.get(minute - timedelta(minutes=n), 0) for n in range(1, 13)]
+        baseline = sum(previous) / len(previous)
+        current = buckets.get(minute, 0)
+        return round(current / baseline, 2) if baseline > 0 else 0.0
 
     def analyze_index(
         self,
@@ -55,7 +82,7 @@ class MultiIndexDetector:
         candles_daily: List[UnifiedCandle],
         option_chain: OptionChainSnapshot,
         risk_state: RiskState,
-        is_quote_fresh: bool = True,
+        is_quote_fresh: bool = False,
         open_underlyings: Optional[List[str]] = None,
         candles_1m: Optional[List[UnifiedCandle]] = None,
         quote_staleness_sec: float = 0.0,
@@ -66,7 +93,7 @@ class MultiIndexDetector:
             return None
 
         # 0. Data Provenance Gate: Reject simulated option chains if ALLOW_SIMULATED_ENTRIES is False
-        if getattr(option_chain, "is_simulated", False) and not getattr(settings, "ALLOW_SIMULATED_ENTRIES", False):
+        if (getattr(option_chain, "is_simulated", False) or str(getattr(option_chain, "source", "")).endswith("_sim")) and not getattr(settings, "ALLOW_SIMULATED_ENTRIES", False):
             logger.warning(f"Signal suppressed for {underlying}: Simulated option feed detected and ALLOW_SIMULATED_ENTRIES is False.")
             return None
 
@@ -103,6 +130,21 @@ class MultiIndexDetector:
             vwap_value=vwap_val,
         )
         setup_type, setup_reasons = setup_res
+        early_watch_only = setup_type in (
+            SetupType.EARLY_BULLISH_MOMENTUM,
+            SetupType.EARLY_BEARISH_MOMENTUM,
+        )
+        recent_bars = candles_5m[-6:-1] if len(candles_5m) >= 6 else candles_5m[:-1]
+        swing_h = max(b.high for b in recent_bars) if recent_bars else orb.range_high
+        swing_l = min(b.low for b in recent_bars) if recent_bars else orb.range_low
+        if setup_type == SetupType.NONE and candles_1m:
+            early_res = PriceActionAnalyzer.detect_early_watch_setup(
+                candles_1m, orb, swing_high=swing_h, swing_low=swing_l
+            )
+            if early_res.setup_type != SetupType.NONE:
+                setup_res = early_res
+                setup_type, setup_reasons = setup_res
+                early_watch_only = True
 
         is_bullish_candidate = setup_type in (
             SetupType.BULLISH_BREAKOUT,
@@ -127,10 +169,12 @@ class MultiIndexDetector:
 
         if atr_val and atr_val > 0 and breakout_boundary > 0:
             extension_dist = abs(option_chain.underlying_ltp - breakout_boundary)
-            if extension_dist > 1.5 * atr_val:
+            max_extension = settings.MAX_BREAKOUT_EXTENSION_ATR * atr_val
+            if extension_dist > max_extension:
                 logger.debug(
                     f"Setup rejected for {underlying}: Price extended by {extension_dist:.1f} pts "
-                    f"(>1.5 ATR = {1.5 * atr_val:.1f} pts) from breakout boundary ({breakout_boundary})."
+                    f"(>{settings.MAX_BREAKOUT_EXTENSION_ATR:.1f} ATR = {max_extension:.1f} pts) "
+                    f"from breakout boundary ({breakout_boundary})."
                 )
                 return None
 
@@ -149,10 +193,22 @@ class MultiIndexDetector:
             max_spread_pct=cfg.max_acceptable_spread_pct,
             delta_min=cfg.delta_target_min,
             delta_max=cfg.delta_target_max,
+            radar_mode=early_watch_only,
         )
         if not contract:
             logger.debug(f"Contract selection failed for {underlying}: {contract_errs}")
             return None
+
+        # Index spot volume is commonly absent. Use the selected option's
+        # traded-volume velocity when available; otherwise retain the index
+        # candle RVOL only if that feed actually supplies volume.
+        option_rvol = self._calculate_option_rvol(
+            contract.instrument_id,
+            int(contract.volume or 0),
+            option_chain.snapshot_timestamp,
+        )
+        if option_rvol > 0:
+            rvol = option_rvol
 
         # 6. Targets and Stop-Loss Calculation with ATR Bounds
         last_bar = candles_5m[-1]
@@ -271,7 +327,15 @@ class MultiIndexDetector:
         news_res = news_engine.check_event_risk_veto(current_time=eval_time)
 
         # 12. Mandatory Hard Gates
-        is_fresh = (quote_staleness_sec <= settings.MAX_QUOTE_STALENESS_SECONDS) if is_quote_fresh else False
+        snapshot_time = option_chain.snapshot_timestamp
+        if snapshot_time.tzinfo is None:
+            snapshot_time = snapshot_time.replace(tzinfo=timezone.utc)
+        chain_age = (datetime.now(timezone.utc) - snapshot_time.astimezone(timezone.utc)).total_seconds()
+        chain_is_fresh = (
+            getattr(option_chain, "source", "unknown") == "unknown"
+            or 0.0 <= chain_age <= settings.MAX_QUOTE_STALENESS_SECONDS
+        )
+        is_fresh = bool(is_quote_fresh and quote_staleness_sec <= settings.MAX_QUOTE_STALENESS_SECONDS and chain_is_fresh)
         has_3_targets = bool(levels.tp1_price > 0 and levels.tp2_price > 0 and levels.tp3_price > 0)
         gate_res = confidence_evaluator.evaluate_mandatory_gates(
             is_quote_fresh=is_fresh,
@@ -314,23 +378,26 @@ class MultiIndexDetector:
             tick_delta=tick_delta,
         )
 
-        # Stage 3 - ENTRY: Strict execution qualification (trigger mode satisfied, passed all gates, in entry window, score >= 72)
-        if (
+        # ENTRY requires the entry score, all hard gates, a confirmed trigger,
+        # and an allowed trading window. Early radar evidence cannot qualify.
+        if early_watch_only and score_bd.total_score >= settings.SCORE_EARLY_WATCH:
+            status = "EARLY_WATCH"
+        elif (
             score_bd.total_score >= settings.SCORE_ENTRY_QUALIFIED
             and gate_res.all_passed
             and is_triggered
             and is_in_entry_window
         ):
             status = "ENTRY"
-        # Stage 2 - SETUP_DEVELOPING: Assesses whether the move is genuine (score >= 62, rvol >= 1.0, false move risk not high)
+        # SETUP_DEVELOPING is a stronger watch state; it is not an order.
         elif (
             score_bd.total_score >= settings.SCORE_SETUP_DEVELOPING
             and not false_move.is_veto_for_entry
-            and rvol >= 1.0
+            and rvol >= settings.MIN_RVOL_FOR_DEVELOPING
             and setup_type != SetupType.FAILED_BREAKOUT
         ):
             status = "SETUP_DEVELOPING"
-        # Stage 1 - EARLY_WATCH: High sensitivity radar (score >= 50, setup detected, no failed breakout)
+        # EARLY_WATCH is alert-only; it is never sent to the paper executor.
         elif (
             score_bd.total_score >= settings.SCORE_EARLY_WATCH
             and setup_type != SetupType.FAILED_BREAKOUT

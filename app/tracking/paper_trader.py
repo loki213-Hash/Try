@@ -101,6 +101,16 @@ class PaperTradingEngine:
         """Returns True if a paper trade has already been executed for this signal."""
         return signal_id in self._executed_signals
 
+    def rebind_signal_id(self, old_signal_id: str, new_signal_id: str) -> None:
+        """Keep in-memory trade references aligned when persistence reuses a signal."""
+        if old_signal_id == new_signal_id:
+            return
+        self._executed_signals.discard(old_signal_id)
+        self._executed_signals.add(new_signal_id)
+        for trade in self._active_trades.values():
+            if trade.signal_id == old_signal_id:
+                trade.signal_id = new_signal_id
+
     def open_trade(
         self,
         signal: Signal,

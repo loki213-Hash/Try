@@ -25,12 +25,13 @@ class QuoteValidator:
 
     def __init__(
         self,
-        max_staleness_seconds: float = 5.0,
+        max_staleness_seconds: float = 15.0,
         max_spread_pct: float = 3.5,
     ):
         self.max_staleness_seconds = max_staleness_seconds
         self.max_spread_pct = max_spread_pct
         self._last_valid_quote_time: dict[str, float] = {}
+        self._last_warn_time: dict[str, float] = {}
 
     def validate_quote(
         self, quote: UnifiedQuote, is_live_market: bool = True
@@ -63,7 +64,11 @@ class QuoteValidator:
         else:
             exch_epoch = exch_dt.timestamp()
 
-        staleness = now_epoch - exch_epoch
+        receive_dt = quote.receive_timestamp
+        receive_epoch = receive_dt.timestamp() if receive_dt.tzinfo else receive_dt.replace(tzinfo=timezone.utc).timestamp()
+        # Reject based on the older timestamp so a recently received replay of
+        # an old exchange tick cannot appear fresh.
+        staleness = max(now_epoch - exch_epoch, now_epoch - receive_epoch)
         if is_live_market and staleness > self.max_staleness_seconds:
             reasons.append(
                 f"Data stale: latency {staleness:.2f}s exceeds limit {self.max_staleness_seconds}s"
@@ -79,14 +84,21 @@ class QuoteValidator:
         if is_valid:
             self._last_valid_quote_time[quote.instrument_id] = now_epoch
         else:
-            logger.warning(
-                f"Quote rejected for {quote.symbol} ({quote.instrument_id}): {', '.join(reasons)}"
-            )
+            last_warn = self._last_warn_time.get(quote.instrument_id, 0.0)
+            if (now_epoch - last_warn) >= 30.0:
+                self._last_warn_time[quote.instrument_id] = now_epoch
+                logger.warning(
+                    f"Quote rejected for {quote.symbol} ({quote.instrument_id}): {', '.join(reasons)}"
+                )
+            else:
+                logger.debug(
+                    f"Quote rejected for {quote.symbol} ({quote.instrument_id}): {', '.join(reasons)}"
+                )
 
         return QuoteValidationResult(is_valid=is_valid, reasons=reasons)
 
     def is_instrument_stale(self, instrument_id: str) -> bool:
         last_time = self._last_valid_quote_time.get(instrument_id)
         if not last_time:
-            return True
+            return False
         return (time.time() - last_time) > self.max_staleness_seconds

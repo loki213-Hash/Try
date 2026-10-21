@@ -41,6 +41,22 @@ class UpstoxProvider(BaseMarketDataProvider):
         "NATURALGAS": "MCX_FO|NATURALGAS",
     }
 
+    @staticmethod
+    def _market_timestamp(value: Any, fallback: datetime) -> datetime:
+        if value is None or value == "":
+            return fallback
+        try:
+            numeric = float(value)
+            if numeric > 10**12:
+                numeric /= 1000.0
+            return datetime.fromtimestamp(numeric, timezone.utc)
+        except (TypeError, ValueError, OSError):
+            try:
+                parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+            except ValueError:
+                return fallback
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -294,6 +310,9 @@ class UpstoxProvider(BaseMarketDataProvider):
 
                 ltp = float(ltpc["ltp"])
                 cp = float(ltpc.get("cp", ltp))
+                market_timestamp = ltpc.get("ltt")
+                if market_timestamp is None:
+                    market_timestamp = (market_ff or index_ff or {}).get("currentTs")
 
                 # Identify symbol
                 sym = self._key_to_symbol.get(inst_key)
@@ -361,16 +380,14 @@ class UpstoxProvider(BaseMarketDataProvider):
                             day_open = float(o.get("open", ltp))
                             day_high = float(o.get("high", ltp))
                             day_low = float(o.get("low", ltp))
-                    bid = round(ltp - 0.25, 2)
-                    ask = round(ltp + 0.25, 2)
 
                 quote = UnifiedQuote(
                     instrument_id=inst_id,
                     symbol=sym,
                     exchange="BSE" if "BSE" in inst_key or sym in ("SENSEX", "BANKEX") else "NSE",
                     ltp=ltp,
-                    bid=bid or ltp,
-                    ask=ask or ltp,
+                    bid=bid,
+                    ask=ask,
                     bid_qty=bid_qty,
                     ask_qty=ask_qty,
                     volume=vol,
@@ -379,7 +396,8 @@ class UpstoxProvider(BaseMarketDataProvider):
                     high=day_high,
                     low=day_low,
                     oi=oi,
-                    exchange_timestamp=now,
+                    exchange_timestamp=self._market_timestamp(market_timestamp, now),
+                    receive_timestamp=now,
                     source="upstox_ws",
                     greeks=greeks,
                     iv=iv,
@@ -703,7 +721,8 @@ class UpstoxProvider(BaseMarketDataProvider):
             ask=depth.asks[0].price if depth.asks else round(ltp + 0.25, 2),
             volume=int(data.get("volume") or 0),
             oi=int(data.get("oi") or 0),
-            exchange_timestamp=now,
+            exchange_timestamp=self._market_timestamp(data.get("last_trade_time") or data.get("timestamp"), now),
+            receive_timestamp=now,
             source="upstox",
             depth=depth,
         )
@@ -861,7 +880,7 @@ class UpstoxProvider(BaseMarketDataProvider):
         if cache_key in self._chain_cache:
             snap, c_time = self._chain_cache[cache_key]
             if time.time() - c_time < self._chain_cache_ttl:
-                return snap
+                return self._overlay_live_quotes(snap)
 
         # Commodities do not use Upstox Option Chain API
         if underlying.upper() in ("CRUDEOIL", "NATURALGAS"):
@@ -896,7 +915,7 @@ class UpstoxProvider(BaseMarketDataProvider):
                             )
                             snapshot = self._parse_upstox_option_chain(underlying, exp_dt, data)
                             self._chain_cache[cache_key] = (snapshot, time.time())
-                            return snapshot
+                            return self._overlay_live_quotes(snapshot)
                     elif resp.status_code == 429:
                         self._rate_limit_backoff_until = time.time() + 10.0
                         logger.warning(
@@ -914,6 +933,34 @@ class UpstoxProvider(BaseMarketDataProvider):
         fallback_snap = self._generate_simulated_option_chain(underlying, resolved_expiry)
         self._chain_cache[cache_key] = (fallback_snap, time.time())
         return fallback_snap
+
+    def _overlay_live_quotes(self, snapshot: OptionChainSnapshot) -> OptionChainSnapshot:
+        """Overlay fresh WebSocket ticks on the slower REST OI/Greeks snapshot."""
+        now = datetime.now(timezone.utc)
+        spot = self._last_quotes.get(snapshot.underlying) or self._last_quotes.get(f"IDX_{snapshot.underlying}")
+        if spot and (now - spot.receive_timestamp).total_seconds() <= settings.MAX_QUOTE_STALENESS_SECONDS:
+            snapshot.underlying_ltp = spot.ltp
+        for options in snapshot.contracts.values():
+            for contract in options.values():
+                quote = (
+                    self._last_quotes.get(contract.instrument_id)
+                    or self._last_quotes.get(contract.symbol)
+                    or self._last_quotes.get(self._symbol_to_key.get(contract.symbol, ""))
+                )
+                if not quote or not quote.source.startswith("upstox_ws"):
+                    continue
+                if (now - quote.receive_timestamp).total_seconds() > settings.MAX_QUOTE_STALENESS_SECONDS:
+                    continue
+                contract.ltp = quote.ltp
+                contract.bid = quote.bid if quote.bid and quote.bid > 0 else contract.bid
+                contract.ask = quote.ask if quote.ask and quote.ask > 0 else contract.ask
+                contract.bid_qty = quote.bid_qty
+                contract.ask_qty = quote.ask_qty
+                contract.volume = quote.volume if quote.volume is not None else contract.volume
+                contract.oi = quote.oi if quote.oi is not None else contract.oi
+                if quote.greeks:
+                    contract.greeks = quote.greeks
+        return snapshot
 
     def _parse_upstox_option_chain(
         self, underlying: str, expiry: datetime, data: List[Dict[str, Any]]
@@ -957,8 +1004,8 @@ class UpstoxProvider(BaseMarketDataProvider):
                     option_type="CE",
                     expiry=expiry,
                     ltp=float(mkt.get("ltp", 0.0)),
-                    bid=float(mkt.get("bid_price") or mkt.get("ltp", 0.0)),
-                    ask=float(mkt.get("ask_price") or mkt.get("ltp", 0.0)),
+                    bid=float(mkt["bid_price"]) if mkt.get("bid_price") else None,
+                    ask=float(mkt["ask_price"]) if mkt.get("ask_price") else None,
                     bid_qty=int(mkt.get("bid_qty", 0)),
                     ask_qty=int(mkt.get("ask_qty", 0)),
                     close_price=float(mkt.get("close_price", mkt.get("ltp", 0.0))),
@@ -966,7 +1013,7 @@ class UpstoxProvider(BaseMarketDataProvider):
                     oi=ce_oi,
                     oi_change=ce_oi - ce_prev_oi,
                     greeks=OptionGreeks(
-                        delta=float(greeks_raw.get("delta", 0.5)),
+                        delta=float(greeks_raw["delta"]) if greeks_raw.get("delta") is not None else None,
                         theta=float(greeks_raw.get("theta", 0.0)),
                         gamma=float(greeks_raw.get("gamma", 0.0)),
                         vega=float(greeks_raw.get("vega", 0.0)),
@@ -997,8 +1044,8 @@ class UpstoxProvider(BaseMarketDataProvider):
                     option_type="PE",
                     expiry=expiry,
                     ltp=float(mkt.get("ltp", 0.0)),
-                    bid=float(mkt.get("bid_price") or mkt.get("ltp", 0.0)),
-                    ask=float(mkt.get("ask_price") or mkt.get("ltp", 0.0)),
+                    bid=float(mkt["bid_price"]) if mkt.get("bid_price") else None,
+                    ask=float(mkt["ask_price"]) if mkt.get("ask_price") else None,
                     bid_qty=int(mkt.get("bid_qty", 0)),
                     ask_qty=int(mkt.get("ask_qty", 0)),
                     close_price=float(mkt.get("close_price", mkt.get("ltp", 0.0))),
@@ -1006,7 +1053,7 @@ class UpstoxProvider(BaseMarketDataProvider):
                     oi=pe_oi,
                     oi_change=pe_oi - pe_prev_oi,
                     greeks=OptionGreeks(
-                        delta=float(greeks_raw.get("delta", -0.5)),
+                        delta=float(greeks_raw["delta"]) if greeks_raw.get("delta") is not None else None,
                         theta=float(greeks_raw.get("theta", 0.0)),
                         gamma=float(greeks_raw.get("gamma", 0.0)),
                         vega=float(greeks_raw.get("vega", 0.0)),
@@ -1047,6 +1094,8 @@ class UpstoxProvider(BaseMarketDataProvider):
             expiry=expiry,
             contracts=contracts_dict,
             pcr_oi=pcr,
+            source="upstox_rest",
+            is_simulated=False,
         )
 
     def _generate_simulated_option_chain(
@@ -1114,6 +1163,8 @@ class UpstoxProvider(BaseMarketDataProvider):
             expiry=expiry,
             contracts=contracts_dict,
             pcr_oi=0.98,
+            source="upstox_sim",
+            is_simulated=True,
         )
 
     def _generate_simulated_candles(
